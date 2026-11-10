@@ -15,7 +15,7 @@ TICKERS = ('CNR', 'RY', 'AC')
 TAKER_FEE = {'CNR': 0.0027, 'RY': -0.0014, 'AC': 0.0015}
 MAKER_REBATE = {'CNR': 0.0023, 'RY': -0.0020, 'AC': 0.0011}
 MAX_ORDER = 5000
-STOCK_BUDGET = 6500  # helper default; Bot passes its stricter configured cap
+STOCK_BUDGET = 6500  # conservative helper fallback; Bot passes its configured cap
 
 
 class ApiError(RuntimeError):

@@ -57,7 +57,7 @@ class TightenTests(unittest.TestCase):
         b.manage('RY')
         buys=sorted([o.price for o in b.ledger.active() if o.action=='BUY'],reverse=True)
         self.assertEqual(buys,[9.98,9.96,9.93,9.88])
-        self.assertEqual(sum(o.remaining for o in b.ledger.active() if o.action=='BUY'),4000)
+        self.assertEqual(sum(o.remaining for o in b.ledger.active() if o.action=='BUY'),20000)
 
     def test_failed_cancellation_retains_transition_obligation(self):
         x=Exchange();b=Bot(x,clock=lambda:x.now);b.tick=0;b.manage('RY')
@@ -71,8 +71,8 @@ class TightenTests(unittest.TestCase):
 
     def test_tight_ladder_keeps_inventory_brake_and_passive_pricing(self):
         cfg=Config();snap=snapshot()
-        targets=ladder(snap,3000,cfg,offsets=cfg.tight_offsets)
-        self.assertEqual(targets,{('SELL',-1):(10.02,1500)})
+        targets=ladder(snap,15000,cfg,offsets=cfg.tight_offsets)
+        self.assertEqual(targets,{('SELL',-1):(10.02,5000)})
         wide=snapshot(bid=9.8,ask=10.2,mid=10,fair=10)
         targets=ladder(wide,0,cfg,offsets=cfg.tight_offsets)
         self.assertTrue(all(p<=wide.bid if s=='BUY' else p>=wide.ask for (s,i),(p,q) in targets.items()))

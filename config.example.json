@@ -6,10 +6,10 @@
     0.2
   ],
   "sizes": [
-    1500,
-    1000,
-    1000,
-    500
+    5000,
+    5000,
+    5000,
+    5000
   ],
   "tight_offsets": [
     0.02,
@@ -25,12 +25,12 @@
   "last_entry": 275,
   "flatten_at": 280,
   "end_tick": 300,
-  "gross_budget": 18000,
-  "net_budget": 18000,
-  "stock_budget": 6000,
-  "inventory_brake": 3000,
+  "gross_budget": 22500,
+  "net_budget": 22500,
+  "stock_budget": 22500,
+  "inventory_brake": 15000,
   "inventory_age": 8,
-  "exit_clip": 1500,
+  "exit_clip": 5000,
   "skew": 0.03,
   "recenter_move": 0.03,
   "reprice_delay": 0.8,

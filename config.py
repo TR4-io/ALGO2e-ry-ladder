@@ -6,7 +6,7 @@ import math
 @dataclass(frozen=True)
 class Config:
     offsets: tuple = (.03, .07, .12, .20)
-    sizes: tuple = (1500, 1000, 1000, 500)
+    sizes: tuple = (5000, 5000, 5000, 5000)
     tight_offsets: tuple = (.02, .04, .07, .12)
     tighten_after: float = 50
     fill_window: float = 20
@@ -16,12 +16,12 @@ class Config:
     last_entry: float = 275
     flatten_at: float = 280
     end_tick: float = 300
-    gross_budget: int = 18000
-    net_budget: int = 18000
-    stock_budget: int = 6000
-    inventory_brake: int = 3000
+    gross_budget: int = 22500
+    net_budget: int = 22500
+    stock_budget: int = 22500
+    inventory_brake: int = 15000
     inventory_age: float = 8
-    exit_clip: int = 1500
+    exit_clip: int = 5000
     skew: float = .03
     recenter_move: float = .03
     reprice_delay: float = .8
@@ -76,7 +76,7 @@ class Config:
         for name in ('minimum_volume','gross_budget','net_budget','stock_budget','inventory_brake','exit_clip'):
             if type(getattr(self,name)) is not int:
                 raise ValueError(f'{name} must be an integer')
-        if not (0 < self.inventory_brake < self.stock_budget <= 6500 and
+        if not (0 < self.inventory_brake < self.stock_budget <= 22500 and
                 self.stock_budget <= self.gross_budget <= 22500 and 0 < self.net_budget <= 22500):
             raise ValueError('Invalid position budgets')
         if sum(self.sizes) > self.stock_budget or not 0 < self.exit_clip <= 5000:

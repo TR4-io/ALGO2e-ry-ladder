@@ -11,9 +11,9 @@ class LadderTests(unittest.TestCase):
     def test_four_levels_per_side_and_fee_margin(self):
         plan = ladder(snapshot(bid=99.99, ask=100.01, mid=100, fair=100), 0, Config())
         self.assertEqual([plan[('BUY', i)] for i in range(4)],
-                         [(99.97,1500),(99.93,1000),(99.88,1000),(99.8,500)])
+                         [(99.97,5000),(99.93,5000),(99.88,5000),(99.8,5000)])
         self.assertEqual([plan[('SELL', i)] for i in range(4)],
-                         [(100.03,1500),(100.07,1000),(100.12,1000),(100.2,500)])
+                         [(100.03,5000),(100.07,5000),(100.12,5000),(100.2,5000)])
 
     def test_never_improves_wider_market_or_crosses(self):
         snap=snapshot(bid=99.8,ask=100.2,mid=100,fair=100)
@@ -23,7 +23,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(len(plan),2)  # coalesce identical prices, no stacked duplicates
 
     def test_brake_cancels_adding_side_and_exit_cannot_reverse(self):
-        for pos in (3000,-3000):
+        for pos in (15000,-15000):
             plan=ladder(snapshot(),pos,Config())
             side='SELL' if pos>0 else 'BUY'
             self.assertEqual(set(plan),{(side,-1)})
@@ -32,7 +32,7 @@ class LadderTests(unittest.TestCase):
     def test_partial_inventory_reducing_ladder_cannot_reverse(self):
         plan=ladder(snapshot(),700,Config())
         self.assertLessEqual(sum(q for (s,_),(p,q) in plan.items() if s=='SELL'),700)
-        self.assertLess(sum(q for (s,_),(p,q) in plan.items() if s=='BUY'),4000)
+        self.assertLess(sum(q for (s,_),(p,q) in plan.items() if s=='BUY'),20000)
 
     def test_age_and_caution_use_near_passive_exit(self):
         for kwargs in ({'age':9},{'cautious':True},{'mode':'REDUCE'}):
@@ -57,19 +57,19 @@ class LadderTests(unittest.TestCase):
 
     def test_bad_config(self):
         for kw in ({'offsets':[.03,.02]}, {'sizes':[6000]*4}, {'sizes':[True]*4},
-                   {'offsets':[float('nan')]*4}, {'inventory_brake':6000},
-                   {'recenter_move':0}, {'sizes':[2000]*4}):
+                   {'offsets':[float('nan')]*4}, {'inventory_brake':22500},
+                   {'recenter_move':0}, {'stock_budget':19000}):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 replace(Config(),**kw).validate()
 
     def test_full_side_sweep_fits_capacity_without_netting(self):
         positions=dict.fromkeys(TICKERS,0); orders=[]; cfg=Config()
         for (side,i),(price,q) in ladder(snapshot(),0,cfg).items():
-            safe=capacity(positions,orders,'RY',side,q,18000,18000,6000)
+            safe=capacity(positions,orders,'RY',side,q,cfg.gross_budget,cfg.net_budget,cfg.stock_budget)
             self.assertEqual(safe,q)
             orders.append(Order(len(orders),'RY',side,q,price,0))
         low,high,gross,net=risk_bounds(positions,orders)
-        self.assertEqual((low['RY'],high['RY'],gross,net),(-4000,4000,4000,4000))
+        self.assertEqual((low['RY'],high['RY'],gross,net),(-20000,20000,20000,20000))
 
     def test_manage_only_ry_and_preserves_unchanged_queue(self):
         from tests.exchange import Exchange

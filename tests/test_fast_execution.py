@@ -66,17 +66,17 @@ class FastTests(unittest.TestCase):
         def batch(calls,**kwargs):
             self.assertEqual(len(b.inflight),8)
             low,high,gross,net=risk_bounds(b.ledger.positions,b.inflight)
-            self.assertEqual((low['RY'],high['RY']),(-4000,4000))
+            self.assertEqual((low['RY'],high['RY']),(-20000,20000))
             out=real(calls,**kwargs)
             for o in x.orders.values():
                 if o['action']=='BUY':x.fill(o,o['quantity'],o['price'],True)
             return Batch([dict(x.orders[r['order_id']]) for r in out.results])
         x.batch=batch
         b.place_targets('RY',plan,0,0,0)
-        self.assertEqual(b.ledger.positions['RY'],4000)
+        self.assertEqual(b.ledger.positions['RY'],20000)
         _,_,gross,net=risk_bounds(b.ledger.positions,b.ledger.active())
         self.assertLessEqual(gross,b.gross_limit)
-        self.assertEqual(b.ledger.volume,4000)
+        self.assertEqual(b.ledger.volume,20000)
 
     def test_stale_batch_is_never_dispatched(self):
         x=BatchExchange();x.batch=Mock();b=Bot(x,clock=lambda:2)

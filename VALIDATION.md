@@ -49,3 +49,11 @@ After adding the fallback, `python3 -m unittest discover -s tests -q` passed all
 | 100 ms | 8 | 828.3 ms | 205.8 ms |
 
 These measurements use a fresh limiter per batch, exclude strategy work and loop sleeps, and demonstrate concurrency only. They are not throughput guarantees: sustained operations share one request budget, the live server may serialize requests, and 429 responses lower the effective client cap. The 20 ms minimum cycle period is not an achieved 50 Hz rate. Use recorded `execution_timing` events to assess actual latency, queue time and cycle duration in practice.
+
+## Maximum four-level sizing
+
+Defaults now use 5,000 shares at each of four levels per side (20,000 per side when flat), 22,500-share stock/gross/net budgets, a 15,000-share inventory brake and 5,000-share passive exit clips. Loss and drawdown thresholds are unchanged. These replace the smaller settings used for earlier results in this document.
+
+All 68 tests passed. Additional sizing tests enumerate all 256 combinations of full fills across the eight initial orders, verify that lower live gross/net limits clip the concurrent batch, and force a 20,000-share one-sided sweep followed by an adverse move to test complete liquidation. Existing independent-fill, cancellation, concurrency and fallback regressions remain in the suite.
+
+All 25 concurrent-engine synthetic stress rounds ended with zero residual inventory. Maximum sampled absolute inventory was 19,065 shares; 3 rounds triggered configured loss/drawdown stops. The separate one-sided-sweep test explicitly reaches 20,000 shares. Synthetic behavior is not a live liquidity or profitability guarantee.

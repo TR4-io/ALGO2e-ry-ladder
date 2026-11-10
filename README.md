@@ -38,18 +38,18 @@ python strategy.py --serial       # original sequential execution path for compa
 python benchmark_latency.py       # offline artificial-latency comparison, no RIT calls
 ```
 
-Simultaneous submissions can fill before the next inventory-management decision. Aggregate reservations enforce the hard exposure budget; the 3,000-share brake is still not a guaranteed instantaneous ceiling. Keep this process as the account's only writer.
+Simultaneous submissions can fill before the next inventory-management decision. Aggregate reservations enforce the hard exposure budget; the 15,000-share brake is still not a guaranteed instantaneous ceiling. Keep this process as the account's only writer.
 
 ## Ladder
 
 | Level | Distance below/above adjusted fair price | Shares on each side when flat |
 |---|---:|---:|
-| 1 | 3 cents | 1,500 |
-| 2 | 7 cents | 1,000 |
-| 3 | 12 cents | 1,000 |
-| 4 | 20 cents | 500 |
+| 1 | 3 cents | 5,000 |
+| 2 | 7 cents | 5,000 |
+| 3 | 12 cents | 5,000 |
+| 4 | 20 cents | 5,000 |
 
-Distances are **per side**: the outer pair is 40 cents apart when centered symmetrically. At a $100 center and a narrow book, bids start at 99.97 / 99.93 / 99.88 / 99.80 and asks at 100.03 / 100.07 / 100.12 / 100.20. At most 4,000 shares per side are initially reserved. Prices never intentionally cross the observed external book or improve an already wider best price. Duplicate prices are coalesced without aggregating size.
+Distances are **per side**: the outer pair is 40 cents apart when centered symmetrically. At a $100 center and a narrow book, bids start at 99.97 / 99.93 / 99.88 / 99.80 and asks at 100.03 / 100.07 / 100.12 / 100.20. At most 20,000 shares per side are initially reserved when flat. This is the maximum quantity for four orders per side under the case brief's 5,000-share order cap. It is 40,000 shares of outstanding orders, but worst-case independent fills from flat produce inventory between -20,000 and +20,000 shares, not 40,000 shares of simultaneous long/short inventory. Live limits can reduce the accepted plan. Prices never intentionally cross the observed external book or improve an already wider best price. Duplicate prices are coalesced without aggregating size.
 
 The center uses a depth/microprice and momentum estimate, not the last trade. Inventory shifts the center by up to 3 cents toward flattening. Volatility and observed adverse post-fill movement can widen inner levels up to the outer offset. Book constraints, inventory skew and tick rounding can place quotes farther than 20 cents from the raw midpoint.
 
@@ -57,7 +57,7 @@ RY maker fee: $0.002/share; taker rebate: $0.0014/share, following the case sett
 
 ## Low-fill fallback after tick 50
 
-Starting at simulation tick 50, check confirmed RY fill volume over the trailing 20 ticks. If fewer than 1,000 shares filled (buys plus sells), switch once to **±2 / ±4 / ±7 / ±12 cents** for the rest of that run. Sizes remain 1,500 / 1,000 / 1,000 / 500 shares per side. Monitor throughout the remaining entry period, so a later drought also triggers the fallback. A late-started process first observes a complete 20-tick window. Exactly 1,000 shares meets the threshold and does not trigger.
+Starting at simulation tick 50, check confirmed RY fill volume over the trailing 20 ticks. If fewer than 1,000 shares filled (buys plus sells), switch once to **±2 / ±4 / ±7 / ±12 cents** for the rest of that run. Sizes remain 5,000 shares at each level on each side. Monitor throughout the remaining entry period, so a later drought also triggers the fallback. A late-started process first observes a complete 20-tick window. Exactly 1,000 shares meets the threshold and does not trigger.
 
 Cancel and confirm all existing RY quotes before posting the new ladder; cancellation failures keep the old shares reserved. Normal inventory brakes, trend pauses, fee margin, passive-price checks and volatility widening still apply, so the displayed distances can differ from base offsets. The switch is printed and logged as `ladder_tightened`. Configure `tight_offsets`, `tighten_after`, `fill_window`, and `min_window_fills` in JSON. Custom level counts require matching original offsets, tight offsets and sizes.
 
@@ -65,7 +65,7 @@ Cancel and confirm all existing RY quotes before posting the new ladder; cancell
 
 - Continue making after the 100,000-share qualification minimum and 110,000-share reporting target. Do not shrink size just because the target is reached, or bypass fee/risk checks to manufacture volume. The explicit low-fill fallback above can tighten base offsets. Qualification is not guaranteed.
 - Scale down the inventory-adding side as exposure grows. The reducing-side planned quantities cannot collectively exceed current inventory.
-- At 3,000 shares of absolute inventory, cancel the adding side and use a nearer passive exit. This is a management trigger, not a guaranteed ceiling: resting orders can fill before cancellation. The hard reservation budget is 6,000 shares per stock, with 18,000 gross/net account budgets (also clamped to 90% of live limits).
+- At 15,000 shares of absolute inventory, cancel the adding side and use a nearer passive exit. This is a management trigger, not a guaranteed ceiling: resting orders can fill before cancellation. The configured hard reservation budget is 22,500 shares per stock, with 22,500 gross/net account budgets (also clamped to 90% of live limits). The former 6,000-share stock cap was an internal strategy setting, not the case limit. Near-market inventory exits now use up to 5,000 shares per order.
 - After eight seconds of continuous inventory, use a nearer passive exit for that position rather than waiting only at distant ladder prices. New same-sign fills do not restart the timer.
 - A six-cent midpoint move within the rolling two-second window pauses the adverse inventory-adding side for three seconds. Reducing inventory remains allowed. These are starting hypotheses, not fitted parameters.
 - Preserve unchanged quotes and partial-order queue position. Recenter a level after a three-cent target change and at least 0.8 seconds of order age; cancel unsafe/crossing orders immediately. After any cancellation, recompute on the next cycle before submitting replacements.
@@ -74,6 +74,8 @@ Cancel and confirm all existing RY quotes before posting the new ladder; cancell
 - Ctrl+C once requests liquidation; twice exits with best-effort cancellation. Inspect remaining RIT positions after any abnormal stop. A reset prevents old order IDs from being cancelled in a new round.
 
 Risk reserves every outstanding share independently. Opposite-side orders are not netted against each other. Cancellation and temporarily missing order histories receive bounded confirmation retries. An acknowledgement or a missing order is never treated as proof of a fill/cancellation. Unknown accepted writes stop the bot and trigger best-effort account cleanup, rather than being resubmitted.
+
+Sizing is five times the original 4,000-share-per-side ladder. The wider ladder and low-fill fallback use the same maximum clips. Inventory scaling, cautious mode, available depth and live risk reservations can make actual orders smaller. Dollar loss/drawdown stops are unchanged; larger fills can reach or overshoot those triggers sooner. This is maximum sizing within the existing four-level design, not a finding that maximum size maximizes profit.
 
 ## Configuration and evidence
 
