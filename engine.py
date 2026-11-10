@@ -50,6 +50,7 @@ class Bot:
         self.active_seen = False
         self.round_changed = False
         self.stopping = False
+        self.stop_reason = None
         self.cautious = False
         self.mode = 'MAKE'
         self.start_pnl = None
@@ -325,6 +326,7 @@ class Bot:
             return
         snap = self.observe(ticker, book, observed)
         if snap is None or snap.spread > self.cfg.max_spread:
+            self.record.emit('quote_blocked', tick=self.tick, reason='stale_or_invalid_book' if snap is None else 'wide_spread')
             self.cancel_many(list(self.ledger.active(ticker)), 'invalid_book')
             return
         self.check_fill_activity()
@@ -414,16 +416,32 @@ class Bot:
         if pnl is not None:
             self.peak = max(self.peak, pnl)
             self.cautious = pnl <= -self.cfg.soft_loss
-            if pnl <= -self.cfg.hard_loss or self.peak >= self.cfg.profit_arm and self.peak-pnl >= self.cfg.drawdown:
+            reason = ('hard_loss' if pnl <= -self.cfg.hard_loss else
+                      'profit_drawdown' if self.peak >= self.cfg.profit_arm and
+                      self.peak-pnl >= self.cfg.drawdown else None)
+            if reason and not self.stopping:
+                self.stop_reason = reason
                 self.stopping = True
+                self.record.emit('risk_stop', tick=tick, reason=reason, pnl=pnl, peak=self.peak)
+                print(f'RISK STOP: {reason}; P&L={pnl:.2f}, peak={self.peak:.2f}. '
+                      'Closing inventory, then exiting.', flush=True)
         self.mode = phase(self.cfg, tick, self.ledger.volume, self.stopping)
         if tick-self.last_report >= 5:
             self.last_report = tick
             needed = max(0, self.cfg.minimum_volume-self.ledger.volume)
             rate = needed/max(1, self.cfg.entry_cutoff-tick)
-            print(f't={tick:.1f} volume={self.ledger.volume:,} need={needed:,} rate={rate:.0f}/s P&L={pnl} mode={self.mode}')
+            open_orders = self.ledger.active('RY')
+            pending_buy = sum(o.remaining for o in open_orders if o.action == 'BUY')
+            pending_sell = sum(o.remaining for o in open_orders if o.action == 'SELL')
+            gross = sum(abs(p) for p in self.ledger.positions.values())
+            net = sum(self.ledger.positions.values())
+            print(f't={tick:.1f} volume={self.ledger.volume:,} need={needed:,} rate={rate:.0f}/s '
+                  f'P&L={pnl} mode={self.mode} RY={self.ledger.positions["RY"]:,} '
+                  f'gross={gross:,}/{self.gross_limit:,} net={net:,}/{self.net_limit:,} '
+                  f'open={len(open_orders)} buy={pending_buy:,} sell={pending_sell:,}', flush=True)
             self.record.emit('status', tick=tick, volume=self.ledger.volume, needed=needed, required_rate=rate,
-                             pnl=pnl, positions=dict(self.ledger.positions), mode=self.mode, cautious=self.cautious)
+                             pnl=pnl, positions=dict(self.ledger.positions), mode=self.mode, cautious=self.cautious,
+                             open_orders=len(open_orders), pending_buy=pending_buy, pending_sell=pending_sell)
         if self.stopping and not any(self.ledger.positions.values()) and not self.ledger.active():
             return False
         self.manage('RY')

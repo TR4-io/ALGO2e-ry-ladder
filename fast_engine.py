@@ -60,6 +60,12 @@ class Bot(SerialBot):
         key = self.key('GET','securities/book',{'ticker':ticker,'limit':1000})
         if key not in self.frame:
             return super().book(ticker)
+        if self.clock()-self.frame_started > self.cfg.max_book_age:
+            # Reconciliation/queue waits can age the prefetch. Re-read once;
+            # never extend the lifetime of a stale snapshot to force a trade.
+            self.frame.pop(key)
+            self.record.emit('book_refresh', tick=self.tick, reason='prefetch_expired')
+            return super().book(ticker)
         raw = self.frame.pop(key)
         return clean_book(raw, {str(o.id) for o in self.ledger.orders.values()}), self.frame_started
 

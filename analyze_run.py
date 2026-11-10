@@ -9,6 +9,8 @@ def summarize(path):
     drift = defaultdict(lambda: [0., 0])
     last_status = end = latest_execution_timing = None
     errors = []
+    diagnostics = defaultdict(int)
+    risk_stop = None
     fills = []
     levels = {}
     max_inventory = 0
@@ -22,6 +24,10 @@ def summarize(path):
                 errors.append(f'Malformed log line {line_number}; possibly interrupted write')
                 continue
             kind = event['event']
+            if kind in ('quote_blocked', 'book_refresh'):
+                diagnostics[event['reason']] += 1
+            elif kind == 'risk_stop':
+                risk_stop = event
             if kind == 'ladder_order':
                 levels[event['order_id']] = (event['side'], event['level'])
             if kind == 'fill':
@@ -50,7 +56,7 @@ def summarize(path):
         slot = levels.get(event.get('order_id'))
         key = f'{slot[0]} level {slot[1]}' if slot else event['intent']
         by_level[key] += event['quantity']
-    return dict(latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
+    return dict(diagnostics=dict(diagnostics), risk_stop=risk_stop, latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
                 sampled_max_ry_inventory=max_inventory, sampled_max_drawdown=max_drawdown,
                 file=str(path), completed=end is not None, final=end, latest_status=last_status,
                 confirmed_fill_volume=dict(totals),

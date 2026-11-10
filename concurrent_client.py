@@ -19,6 +19,8 @@ class Budget:
     """Global rolling-second budget, shared cooldown and adaptive 429 backoff."""
     def __init__(self, rate, clock=time.monotonic, sleep=time.sleep, burst=4):
         self.rate = rate
+        self.max_rate = rate
+        self.recover_after = 0
         self.clock, self.sleep = clock, sleep
         self.burst = min(rate, burst)
         self.tokens = float(self.burst)
@@ -51,9 +53,20 @@ class Budget:
 
     def throttle(self, wait):
         with self.lock:
-            self.blocked_until = max(self.blocked_until, self.clock()+wait)
-            self.rate = max(1, int(self.rate*.8))
+            now = self.clock()
+            # Sibling 429s during the same cooldown are one congestion event.
+            if now >= self.blocked_until:
+                self.rate = max(1, int(self.rate*.8))
+            self.blocked_until = max(self.blocked_until, now+wait)
+            self.recover_after = self.blocked_until+10
             self.tokens = 0
+
+    def success(self):
+        with self.lock:
+            now = self.clock()
+            if self.rate < self.max_rate and now >= self.recover_after:
+                self.rate = min(self.max_rate, self.rate+1)
+                self.recover_after = now+10
 
 class ConcurrentClient(Client):
     def __init__(self, rate=60, workers=4):
@@ -89,7 +102,9 @@ class ConcurrentClient(Client):
             session = self._session()
             if _deadline is not None and time.monotonic() >= _deadline:
                 raise ExpiredQuote('Decision expired before HTTP dispatch')
-            return self._request(session, method, path, params)
+            result = self._request(session, method, path, params)
+            self.budget.success()
+            return result
         except RateLimited as exc:
             self.budget.throttle(exc.wait)
             raise

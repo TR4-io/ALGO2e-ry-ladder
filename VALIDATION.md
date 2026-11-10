@@ -65,3 +65,9 @@ Stock, gross and net defaults are now 25,000 shares, clamped to any lower live e
 All 75 tests passed. New tests cover continued full-size quoting at ticks 275, 280 and 299, aged inventory, both signs of 15,000-share inventory, exact 25,000-share capacity, optional restoration of legacy controls, cancellation at case end and accurately reported residual inventory. Existing tests still cover concurrent risk reservations and loss-stop liquidation.
 
 All 25 concurrent synthetic stress rounds completed. Maximum sampled absolute inventory was 25,000 shares. Three loss-stop rounds finished flat; the other 22 rounds finished with residual inventory, as expected without scheduled liquidation. These synthetic results validate mechanics, not competitive profitability. No live RIT trades were run.
+
+## Execution stall recovery and diagnostics
+
+All 81 tests passed. New regressions reproduce reconciliation aging a prefetched book past its expiry and verify that a fresh book permits quoting; a fresh request that is itself too slow still blocks submissions. Tests also cover sibling 429 deduplication, bounded automatic rate recovery, actual-zero positions with 40,000 shares of resting orders, explicit drawdown stop reasons, and wall-clock heartbeat reporting without API calls or tick progress.
+
+The changes address reproducible code-level stall paths. No practice-run console transcript or JSONL recording was available to confirm which path caused the reported live symptom. No live RIT orders were placed during this work.
