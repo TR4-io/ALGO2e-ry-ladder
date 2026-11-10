@@ -64,6 +64,11 @@ def ladder(snap, pos, cfg, age=0, mode='MAKE', cautious=False, blocked=(), penal
             # Widen inner levels within the configured outer distance.
             distance = min(offsets[-1], offset+widening+penalties.get(side, 0))
             raw = center-sign*distance
+            # Keep the nearest level eligible when inventory skew moves it too
+            # close to fair. Price it at the fee-adjusted edge floor instead of
+            # dropping that level and leaving only distant opposite-side orders.
+            edge_floor = cfg.min_edge-MAKER_REBATE['RY']+penalties.get(side, 0)
+            raw = min(raw, snap.fair-edge_floor) if side == 'BUY' else max(raw, snap.fair+edge_floor)
             price = (math.floor((min(raw, snap.bid)+1e-9)*100)/100 if side == 'BUY'
                      else math.ceil((max(raw, snap.ask)-1e-9)*100)/100)
             price = round(price, 2)

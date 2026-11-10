@@ -76,7 +76,7 @@ class StallTests(unittest.TestCase):
             bot.step()
             x.now = 5
             bot.step()
-        self.assertIn('gross=0/25,000 net=0/25,000 open=8 buy=20,000 sell=20,000', out.getvalue())
+        self.assertIn('gross=0/25,000 net=0/25,000 open=8 buy=12,500 sell=12,500', out.getvalue())
 
     def test_drawdown_stop_has_explicit_reason(self):
         x = BatchExchange()

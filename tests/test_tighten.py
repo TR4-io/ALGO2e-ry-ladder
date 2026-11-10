@@ -24,7 +24,7 @@ class TightenTests(unittest.TestCase):
         b.tick=70;b.check_fill_activity()
         events=[json.loads(s) for s in b.record.stream.getvalue().splitlines()]
         self.assertEqual(len(events),1)
-        self.assertEqual(events[0]['offsets'],[.02,.04,.07,.12])
+        self.assertEqual(events[0]['offsets'],[.02,.03,.05,.08])
 
     def test_counts_confirmed_deltas_only_and_threshold_is_exclusive(self):
         b=self.bot();b.tick=40
@@ -56,8 +56,8 @@ class TightenTests(unittest.TestCase):
         self.assertFalse(b.ledger.active())
         b.manage('RY')
         buys=sorted([o.price for o in b.ledger.active() if o.action=='BUY'],reverse=True)
-        self.assertEqual(buys,[9.98,9.96,9.93,9.88])
-        self.assertEqual(sum(o.remaining for o in b.ledger.active() if o.action=='BUY'),20000)
+        self.assertEqual(buys,[9.98,9.97,9.95,9.92])
+        self.assertEqual(sum(o.remaining for o in b.ledger.active() if o.action=='BUY'),12500)
 
     def test_failed_cancellation_retains_transition_obligation(self):
         x=Exchange();b=Bot(x,clock=lambda:x.now);b.tick=0;b.manage('RY')

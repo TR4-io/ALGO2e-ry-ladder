@@ -5,9 +5,9 @@ import math
 
 @dataclass(frozen=True)
 class Config:
-    offsets: tuple = (.03, .07, .12, .20)
-    sizes: tuple = (5000, 5000, 5000, 5000)
-    tight_offsets: tuple = (.02, .04, .07, .12)
+    offsets: tuple = (.02, .04, .08, .15)
+    sizes: tuple = (5000, 4000, 2500, 1000)
+    tight_offsets: tuple = (.02, .03, .05, .08)
     tighten_after: float = 50
     fill_window: float = 20
     min_window_fills: int = 1000

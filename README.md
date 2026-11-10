@@ -44,20 +44,20 @@ Simultaneous submissions can fill before the next inventory-management decision.
 
 | Level | Distance below/above adjusted fair price | Shares on each side when flat |
 |---|---:|---:|
-| 1 | 3 cents | 5,000 |
-| 2 | 7 cents | 5,000 |
-| 3 | 12 cents | 5,000 |
-| 4 | 20 cents | 5,000 |
+| 1 | 2 cents | 5,000 |
+| 2 | 4 cents | 4,000 |
+| 3 | 8 cents | 2,500 |
+| 4 | 15 cents | 1,000 |
 
-Distances are **per side**: the outer pair is 40 cents apart when centered symmetrically. At a $100 center and a narrow book, bids start at 99.97 / 99.93 / 99.88 / 99.80 and asks at 100.03 / 100.07 / 100.12 / 100.20. At most 20,000 shares per side are initially reserved when flat. This is the maximum quantity for four orders per side under the case brief's 5,000-share order cap. It is 40,000 shares of outstanding orders, but worst-case independent fills from flat produce inventory between -20,000 and +20,000 shares, not 40,000 shares of simultaneous long/short inventory. Live limits can reduce the accepted plan. Prices never intentionally cross the observed external book or improve an already wider best price. Duplicate prices are coalesced without aggregating size.
+Distances are **per side**. At a $100 adjusted center and a narrow book, bids start at 99.98 / 99.96 / 99.92 / 99.85 and asks at 100.02 / 100.04 / 100.08 / 100.15. Initial reservations total 12,500 shares per side: 25,000 outstanding across both sides, with independent fills producing inventory between -12,500 and +12,500 from flat. The 25,000-share inventory ceiling remains unchanged. Smaller outer orders leave room for repeated inner fills and replenishment. Live capacity can reduce orders. Prices stay passive against the external book; duplicate prices are coalesced without aggregating size.
 
-The center uses a depth/microprice and momentum estimate, not the last trade. Inventory shifts the center by up to 3 cents toward flattening, without reducing order quantities merely because inventory increased. Volatility and observed adverse post-fill movement can widen inner levels up to the outer offset. Book constraints, inventory skew and tick rounding can place quotes farther than 20 cents from the raw midpoint.
+The center uses a depth/microprice and momentum estimate, not the last trade. Inventory shifts the center by up to 3 cents toward flattening, without reducing order quantities merely because inventory increased. Volatility and observed adverse post-fill movement can widen inner levels up to the outer offset. Book constraints, inventory skew and tick rounding can place quotes farther than 15 cents from the raw midpoint.
 
 RY maker fee: $0.002/share; taker rebate: $0.0014/share, following the case settings inherited from the rebuild. A completed passive buy/sell cycle earns its actual price difference minus $0.004/share. Repricing and unmatched inventory mean the initial displayed width is not guaranteed profit. The bot has no speculative taker leg; marketable limit orders are reserved for liquidation.
 
 ## Low-fill fallback after tick 50
 
-Starting at simulation tick 50, check confirmed RY fill volume over the trailing 20 ticks. If fewer than 1,000 shares filled (buys plus sells), switch once to **±2 / ±4 / ±7 / ±12 cents** for the rest of that run. Sizes remain 5,000 shares at each level on each side. Monitor throughout the remaining entry period, so a later drought also triggers the fallback. A late-started process first observes a complete 20-tick window. Exactly 1,000 shares meets the threshold and does not trigger.
+Starting at simulation tick 50, check confirmed RY fill volume over the trailing 20 ticks. If fewer than 1,000 shares filled (buys plus sells), switch once to **±2 / ±3 / ±5 / ±8 cents** for the rest of that run. Sizes remain 5,000 / 4,000 / 2,500 / 1,000 shares per side. Monitor throughout the remaining entry period, so a later drought also triggers the fallback. A late-started process first observes a complete 20-tick window. Exactly 1,000 shares meets the threshold and does not trigger.
 
 Cancel and confirm all existing RY quotes before posting the new ladder; cancellation failures keep the old shares reserved. Hard position limits, trend pauses, fee margin, passive-price checks and volatility widening still apply, so the displayed distances can differ from base offsets. The switch is printed and logged as `ladder_tightened`. Configure `tight_offsets`, `tighten_after`, `fill_window`, and `min_window_fills` in JSON. Custom level counts require matching original offsets, tight offsets and sizes.
 
@@ -65,7 +65,7 @@ Cancel and confirm all existing RY quotes before posting the new ladder; cancell
 
 - Continue making after the 100,000-share qualification minimum and 110,000-share reporting target. Do not shrink size just because the target is reached, or bypass fee/risk checks to manufacture volume. The explicit low-fill fallback above can tighten base offsets. Qualification is not guaranteed.
 - Keep full configured clip sizes as inventory grows, subject to remaining hard-limit capacity. Opposite-side orders can reverse inventory, with every independent combination of outstanding fills reserved against the limits.
-- Stock, gross and net budgets are **25,000 shares**, clamped to the actual live limits with no automatic 10% haircut. Initial four-level ladders still post at most 20,000 shares per side when flat. At +15,000 shares, for example, another 10,000 buys can be reserved while up to 20,000 sells remain possible. At +25,000, additional buys are blocked by the hard limit; sells remain possible.
+- Stock, gross and net budgets are **25,000 shares**, clamped to the actual live limits with no automatic 10% haircut. Initial four-level ladders post at most 12,500 shares per side when flat. At +15,000 shares, for example, another 10,000 buys can be reserved while up to 12,500 sells remain possible. At +25,000, additional buys are blocked by the hard limit; sells remain possible.
 - `inventory_throttle=false` disables the old 15,000-share brake, inventory-proportional size reductions, eight-second inventory-age exits and the rule that the opposite ladder could only flatten rather than reverse. Inventory-aware price skew and all hard risk reservations remain. Set this flag to `true` only to restore those optional controls.
 - A six-cent midpoint move within the rolling two-second window pauses the adverse inventory-adding side for three seconds. Reducing inventory remains allowed. These are starting hypotheses, not fitted parameters.
 - Preserve unchanged quotes and partial-order queue position. Recenter a level after a three-cent target change and at least 0.8 seconds of order age; cancel unsafe/crossing orders immediately. After any cancellation, recompute on the next cycle before submitting replacements.
@@ -75,7 +75,9 @@ Cancel and confirm all existing RY quotes before posting the new ladder; cancell
 
 Risk reserves every outstanding share independently. Opposite-side orders are not netted against each other. Cancellation and temporarily missing order histories receive bounded confirmation retries. An acknowledgement or a missing order is never treated as proof of a fill/cancellation. Unknown accepted writes stop the bot and trigger best-effort account cleanup, rather than being resubmitted.
 
-Sizing is five times the original 4,000-share-per-side ladder. The wider ladder and low-fill fallback use the same maximum clips. Loss-based cautious mode, available depth and live risk reservations can make actual orders smaller. Inventory scaling is disabled by default. Dollar loss/drawdown stops are unchanged; larger fills can reach or overshoot those triggers sooner. This is maximum sizing within the existing four-level design, not a finding that maximum size maximizes profit.
+Sizing is concentrated at the inner levels. Full fills free their individual ladder slots for replacement on the next eligible cycle, without requiring an opposite-side fill. Partial orders keep their remaining quantity and queue position; they are not cancelled merely to top up. Cancellation races require confirmation and a fresh decision before replacements. At the hard inventory ceiling, only orders that fit the remaining capacity can be submitted.
+
+When inventory skew would put the near quote inside the fee-adjusted minimum edge, that quote is moved back to the edge floor instead of being dropped, preserving the closest eligible level. Fees, passive pricing, trend/data checks and loss controls remain enforced. These settings aim for more accessible fills; continuous fills and higher profits are not guaranteed.
 
 ## Configuration and evidence
 
@@ -96,7 +98,7 @@ Tests and `stress_check.py` run entirely offline. The stress runner exercises th
 
 The console prints a wall-clock heartbeat every five seconds, independently of simulation-tick progress. A heartbeat stuck at `reading/reconciling/quoting` with increasing elapsed time indicates a slow cycle; a frozen tick can also mean the simulation is paused. The startup line says `execution diagnostics enabled` and prints the run-log path.
 
-Status lines separate actual RY inventory, actual gross/net positions and their ceilings, and remaining open buy/sell quantities. For example, `gross=0/25,000 net=0/25,000 open=8 buy=20,000 sell=20,000` means the bot is flat with a resting two-sided ladder. The 25,000-share setting is a ceiling, not a target holding. No fills despite resting orders can reflect wide prices or queue position; fast submission cannot guarantee executions. The 20-tick fill window is an observation window, not a wait between batches.
+Status lines separate actual RY inventory, actual gross/net positions and their ceilings, and remaining open buy/sell quantities. For example, `gross=0/25,000 net=0/25,000 open=8 buy=12,500 sell=12,500` means the bot is flat with a resting two-sided ladder. The 25,000-share setting is a ceiling, not a target holding. No fills despite resting orders can reflect wide prices or queue position; fast submission cannot guarantee executions. The 20-tick fill window is an observation window, not a wait between batches.
 
 Expired prefetched books are refreshed once after reconciliation; a fresh request that itself takes too long still cannot authorize a stale quote. `RISK STOP` identifies a hard-loss or profit-drawdown exit, and the log analyzer reports these along with stale/invalid-book blocks and refreshes. Loss thresholds are unchanged. Do not use repeated restarts to reset an intentional loss stop.
 

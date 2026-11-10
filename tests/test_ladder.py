@@ -11,9 +11,9 @@ class LadderTests(unittest.TestCase):
     def test_four_levels_per_side_and_fee_margin(self):
         plan = ladder(snapshot(bid=99.99, ask=100.01, mid=100, fair=100), 0, Config())
         self.assertEqual([plan[('BUY', i)] for i in range(4)],
-                         [(99.97,5000),(99.93,5000),(99.88,5000),(99.8,5000)])
+                         [(99.98,5000),(99.96,4000),(99.92,2500),(99.85,1000)])
         self.assertEqual([plan[('SELL', i)] for i in range(4)],
-                         [(100.03,5000),(100.07,5000),(100.12,5000),(100.2,5000)])
+                         [(100.02,5000),(100.04,4000),(100.08,2500),(100.15,1000)])
 
     def test_never_improves_wider_market_or_crosses(self):
         snap=snapshot(bid=99.8,ask=100.2,mid=100,fair=100)
@@ -32,7 +32,7 @@ class LadderTests(unittest.TestCase):
     def test_partial_inventory_reducing_ladder_cannot_reverse(self):
         plan=ladder(snapshot(),700,Config(inventory_throttle=True))
         self.assertLessEqual(sum(q for (s,_),(p,q) in plan.items() if s=='SELL'),700)
-        self.assertLess(sum(q for (s,_),(p,q) in plan.items() if s=='BUY'),20000)
+        self.assertLess(sum(q for (s,_),(p,q) in plan.items() if s=='BUY'),12500)
 
     def test_age_and_caution_use_near_passive_exit(self):
         for kwargs in ({'age':9},{'cautious':True},{'mode':'REDUCE'}):
@@ -58,7 +58,7 @@ class LadderTests(unittest.TestCase):
     def test_bad_config(self):
         for kw in ({'offsets':[.03,.02]}, {'sizes':[6000]*4}, {'sizes':[True]*4},
                    {'offsets':[float('nan')]*4}, {'inventory_brake':25000},
-                   {'recenter_move':0}, {'stock_budget':19000}):
+                   {'recenter_move':0}, {'stock_budget':12000}):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 replace(Config(),**kw).validate()
 
@@ -69,7 +69,7 @@ class LadderTests(unittest.TestCase):
             self.assertEqual(safe,q)
             orders.append(Order(len(orders),'RY',side,q,price,0))
         low,high,gross,net=risk_bounds(positions,orders)
-        self.assertEqual((low['RY'],high['RY'],gross,net),(-20000,20000,20000,20000))
+        self.assertEqual((low['RY'],high['RY'],gross,net),(-12500,12500,12500,12500))
 
     def test_manage_only_ry_and_preserves_unchanged_queue(self):
         from tests.exchange import Exchange
@@ -146,5 +146,5 @@ class LifecycleIntegrationTests(unittest.TestCase):
     def test_widening_keeps_outer_offset(self):
         cfg=Config();plan=ladder(snapshot(bid=99.99,ask=100.01,mid=100,fair=100,sigma=.2),0,cfg,
                                 penalties={'BUY':.03,'SELL':.03})
-        self.assertEqual(plan[('BUY',3)][0],99.8)
-        self.assertEqual(plan[('SELL',3)][0],100.2)
+        self.assertEqual(min(p for (side,i),(p,q) in plan.items() if side=='BUY'),99.85)
+        self.assertEqual(max(p for (side,i),(p,q) in plan.items() if side=='SELL'),100.15)

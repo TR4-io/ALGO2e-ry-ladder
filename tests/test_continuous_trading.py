@@ -24,8 +24,8 @@ class ContinuousTradingTests(unittest.TestCase):
             plan=ladder(snap,pos,cfg,age=200)
             adding='BUY' if pos>0 else 'SELL'; reducing='SELL' if pos>0 else 'BUY'
             self.assertEqual(sum(q for (s,i),(p,q) in plan.items() if s==adding),10000)
-            self.assertEqual(sum(q for (s,i),(p,q) in plan.items() if s==reducing),20000)
-            self.assertTrue(all(q==5000 for p,q in plan.values()))
+            self.assertEqual(sum(q for (s,i),(p,q) in plan.items() if s==reducing),12500)
+            self.assertTrue(all(q <= cfg.sizes[i] for (side,i),(p,q) in plan.items()))
             self.assertFalse(any(i==-1 for s,i in plan))
             orders=[Order(i,'RY',s,q,p,0) for i,((s,_),(p,q)) in enumerate(plan.items())]
             low,high,gross,net=risk_bounds({'CNR':0,'RY':pos,'AC':0},orders)
@@ -40,8 +40,8 @@ class ContinuousTradingTests(unittest.TestCase):
 
     def test_small_inventory_does_not_reduce_opposite_side_clips(self):
         plan=ladder(snapshot(),500,Config(),age=100)
-        self.assertEqual(sum(q for (s,i),(p,q) in plan.items() if s=='SELL'),20000)
-        self.assertTrue(all(q==5000 for p,q in plan.values()))
+        self.assertEqual(sum(q for (s,i),(p,q) in plan.items() if s=='SELL'),12500)
+        self.assertTrue(all(q == Config().sizes[i] for (side,i),(p,q) in plan.items()))
 
     def test_active_299_places_orders_300_cancels_without_new_entries(self):
         x=BatchExchange();x.now=299;b=Bot(x,clock=lambda:x.now)
