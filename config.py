@@ -1,0 +1,83 @@
+"""RY ladder settings. Dollar distances are per side, not total spreads."""
+from dataclasses import dataclass, asdict
+import json
+import math
+
+@dataclass(frozen=True)
+class Config:
+    offsets: tuple = (.03, .07, .12, .20)
+    sizes: tuple = (1500, 1000, 1000, 500)
+    minimum_volume: int = 100000
+    volume_buffer: float = .10
+    last_entry: float = 275
+    flatten_at: float = 280
+    end_tick: float = 300
+    gross_budget: int = 18000
+    net_budget: int = 18000
+    stock_budget: int = 6000
+    inventory_brake: int = 3000
+    inventory_age: float = 8
+    exit_clip: int = 1500
+    skew: float = .03
+    recenter_move: float = .03
+    reprice_delay: float = .8
+    trend_window: float = 2
+    trend_move: float = .06
+    trend_pause: float = 3
+    max_widening: float = .04
+    min_edge: float = .01
+    poll_seconds: float = .10
+    max_book_age: float = .60
+    max_spread: float = .60
+    soft_loss: float = 500
+    hard_loss: float = 1500
+    drawdown: float = 900
+    profit_arm: float = 500
+    exit_slippage: float = .10
+    urgent_slippage: float = .30
+
+    @property
+    def target_volume(self):
+        return self.minimum_volume + math.ceil(self.minimum_volume*self.volume_buffer)
+
+    def validate(self):
+        for name, value in asdict(self).items():
+            if name in ('offsets', 'sizes'):
+                continue
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError(f'{name} must be finite and nonnegative')
+        if not isinstance(self.offsets, (tuple, list)) or not isinstance(self.sizes, (tuple, list)):
+            raise ValueError('offsets and sizes must be lists')
+        if not 1 <= len(self.offsets) == len(self.sizes) <= 8:
+            raise ValueError('Supply 1 to 8 matched ladder levels')
+        if any(type(x) not in (int, float) or not math.isfinite(x) or not .01 <= x <= .50 for x in self.offsets):
+            raise ValueError('Offsets must be finite dollar distances from .01 to .50')
+        if any(a >= b for a,b in zip(self.offsets, self.offsets[1:])):
+            raise ValueError('Offsets must increase strictly')
+        if any(type(x) is not int or not 1 <= x <= 5000 for x in self.sizes):
+            raise ValueError('Each size must be an integer from 1 to 5000')
+        for name in ('minimum_volume','gross_budget','net_budget','stock_budget','inventory_brake','exit_clip'):
+            if type(getattr(self,name)) is not int:
+                raise ValueError(f'{name} must be an integer')
+        if not (0 < self.inventory_brake < self.stock_budget <= 6500 and
+                self.stock_budget <= self.gross_budget <= 22500 and 0 < self.net_budget <= 22500):
+            raise ValueError('Invalid position budgets')
+        if sum(self.sizes) > self.stock_budget or not 0 < self.exit_clip <= 5000:
+            raise ValueError('Ladder exceeds stock budget or invalid exit clip')
+        if not 0 < self.last_entry < self.flatten_at < self.end_tick <= 300:
+            raise ValueError('Invalid closeout times')
+        if not 0 < self.poll_seconds <= self.max_book_age <= 2:
+            raise ValueError('Invalid polling settings')
+        if not (0 < self.recenter_move and 0 < self.inventory_age and 0 < self.trend_window
+                and 0 < self.trend_move and 0 < self.trend_pause):
+            raise ValueError('Invalid management thresholds')
+        if not self.soft_loss < self.hard_loss or self.exit_slippage > self.urgent_slippage or self.volume_buffer > 1:
+            raise ValueError('Invalid loss, slippage or volume settings')
+        return self
+
+    @classmethod
+    def load(cls, path=None):
+        if path is None:
+            return cls().validate()
+        with open(path, encoding='utf-8') as f:
+            return cls(**json.load(f)).validate()
