@@ -25,3 +25,7 @@ Important practical limits:
 4. Profitable completed cycles must outweigh adverse fills, closeout costs and missed fills. Qualification and competitive P&L are unverified.
 5. Compare fixed-size variants on multiple competitive practice rounds, keeping adverse runs. Use final account P&L after flattening, drawdown, matched inventory cycles, qualification and residual exposure. Do not choose parameters solely from these synthetic results.
 6. Connection/permission/rate failures, permanently unavailable order history or insufficient exit depth can force a stop with remaining positions. Inspect RIT after an abnormal exit.
+
+## Tick-50 low-fill fallback
+
+After adding the fallback, `python3 -m unittest discover -s tests -q` passed all 46 tests, including the existing 10 full-round integration scenarios. Eight new tests cover activation at tick 50, a complete observation window for late starts, exact-threshold behavior, cumulative-fill deduplication, excluding non-RY fills, one-time switching, confirmation of old cancellations before tighter replacements (including a failed cancellation), preserved passive/inventory controls, and invalid configuration. The earlier 25-round stress results above describe the initial implementation.

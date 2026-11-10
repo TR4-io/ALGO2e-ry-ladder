@@ -11,6 +11,15 @@
     1000,
     500
   ],
+  "tight_offsets": [
+    0.02,
+    0.04,
+    0.07,
+    0.12
+  ],
+  "tighten_after": 50,
+  "fill_window": 20,
+  "min_window_fills": 1000,
   "minimum_volume": 100000,
   "volume_buffer": 0.1,
   "last_entry": 275,

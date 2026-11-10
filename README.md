@@ -33,9 +33,15 @@ The center uses a depth/microprice and momentum estimate, not the last trade. In
 
 RY maker fee: $0.002/share; taker rebate: $0.0014/share, following the case settings inherited from the rebuild. A completed passive buy/sell cycle earns its actual price difference minus $0.004/share. Repricing and unmatched inventory mean the initial displayed width is not guaranteed profit. The bot has no speculative taker leg; marketable limit orders are reserved for liquidation.
 
+## Low-fill fallback after tick 50
+
+Starting at simulation tick 50, check confirmed RY fill volume over the trailing 20 ticks. If fewer than 1,000 shares filled (buys plus sells), switch once to **±2 / ±4 / ±7 / ±12 cents** for the rest of that run. Sizes remain 1,500 / 1,000 / 1,000 / 500 shares per side. Monitor throughout the remaining entry period, so a later drought also triggers the fallback. A late-started process first observes a complete 20-tick window. Exactly 1,000 shares meets the threshold and does not trigger.
+
+Cancel and confirm all existing RY quotes before posting the new ladder; cancellation failures keep the old shares reserved. Normal inventory brakes, trend pauses, fee margin, passive-price checks and volatility widening still apply, so the displayed distances can differ from base offsets. The switch is printed and logged as `ladder_tightened`. Configure `tight_offsets`, `tighten_after`, `fill_window`, and `min_window_fills` in JSON. Custom level counts require matching original offsets, tight offsets and sizes.
+
 ## Profit and inventory management
 
-- Continue making after the 100,000-share qualification minimum and 110,000-share reporting target. Do not shrink size just because the target is reached, or narrow quotes solely to manufacture volume. Qualification is not guaranteed.
+- Continue making after the 100,000-share qualification minimum and 110,000-share reporting target. Do not shrink size just because the target is reached, or bypass fee/risk checks to manufacture volume. The explicit low-fill fallback above can tighten base offsets. Qualification is not guaranteed.
 - Scale down the inventory-adding side as exposure grows. The reducing-side planned quantities cannot collectively exceed current inventory.
 - At 3,000 shares of absolute inventory, cancel the adding side and use a nearer passive exit. This is a management trigger, not a guaranteed ceiling: resting orders can fill before cancellation. The hard reservation budget is 6,000 shares per stock, with 18,000 gross/net account budgets (also clamped to 90% of live limits).
 - After eight seconds of continuous inventory, use a nearer passive exit for that position rather than waiting only at distant ladder prices. New same-sign fills do not restart the timer.

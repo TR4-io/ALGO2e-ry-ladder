@@ -7,6 +7,10 @@ import math
 class Config:
     offsets: tuple = (.03, .07, .12, .20)
     sizes: tuple = (1500, 1000, 1000, 500)
+    tight_offsets: tuple = (.02, .04, .07, .12)
+    tighten_after: float = 50
+    fill_window: float = 20
+    min_window_fills: int = 1000
     minimum_volume: int = 100000
     volume_buffer: float = .10
     last_entry: float = 275
@@ -42,7 +46,7 @@ class Config:
 
     def validate(self):
         for name, value in asdict(self).items():
-            if name in ('offsets', 'sizes'):
+            if name in ('offsets', 'sizes', 'tight_offsets'):
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f'{name} must be finite and nonnegative')
@@ -54,6 +58,17 @@ class Config:
             raise ValueError('Offsets must be finite dollar distances from .01 to .50')
         if any(a >= b for a,b in zip(self.offsets, self.offsets[1:])):
             raise ValueError('Offsets must increase strictly')
+        if not isinstance(self.tight_offsets, (tuple, list)) or len(self.tight_offsets) != len(self.offsets):
+            raise ValueError('tight_offsets must match the original ladder length')
+        if any(type(x) not in (int, float) or not math.isfinite(x) or not .01 <= x <= old
+               for x, old in zip(self.tight_offsets, self.offsets)):
+            raise ValueError('Tight offsets must be positive tick distances no wider than original offsets')
+        if any(a >= b for a,b in zip(self.tight_offsets, self.tight_offsets[1:])):
+            raise ValueError('Tight offsets must increase strictly')
+        if not (0 < self.fill_window <= self.tighten_after < self.last_entry):
+            raise ValueError('Invalid fill monitoring window or activation tick')
+        if type(self.min_window_fills) is not int or self.min_window_fills <= 0:
+            raise ValueError('min_window_fills must be a positive integer')
         if any(type(x) is not int or not 1 <= x <= 5000 for x in self.sizes):
             raise ValueError('Each size must be an integer from 1 to 5000')
         for name in ('minimum_volume','gross_budget','net_budget','stock_budget','inventory_brake','exit_clip'):

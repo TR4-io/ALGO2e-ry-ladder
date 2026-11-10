@@ -1,5 +1,5 @@
 """Exchange state machine. Single writer; confirmed fills reserve all open risk."""
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import asdict
 import json
 import math
@@ -58,6 +58,10 @@ class Bot:
         self.inventory_since = None
         self.mid_history = []
         self.blocked_until = {}
+        self.recent_ry_fills = deque()
+        self.fill_monitor_started = None
+        self.tight_ladder = False
+        self.requote_orders = set()
 
     def securities(self):
         rows = {r['ticker']: r for r in self.api('GET', 'securities')}
@@ -112,6 +116,8 @@ class Bot:
         delta = o.filled-before
         if not delta:
             return
+        if o.ticker == 'RY':
+            self.recent_ry_fills.append((self.tick, delta))
         # Optional server cumulative VWAP. Never label order limit as execution price.
         fill_price = None
         try:
@@ -284,6 +290,27 @@ class Bot:
             if order and order.remaining:
                 self.cancel(order, 'exit_unfilled_remainder')
 
+    def check_fill_activity(self):
+        """One-way fallback, based on confirmed shares and simulation ticks."""
+        if self.fill_monitor_started is None:
+            self.fill_monitor_started = self.tick
+        while self.recent_ry_fills and self.recent_ry_fills[0][0] <= self.tick-self.cfg.fill_window:
+            self.recent_ry_fills.popleft()
+        if (self.tight_ladder or self.mode != 'MAKE' or self.tick < self.cfg.tighten_after
+                or self.tick-self.fill_monitor_started < self.cfg.fill_window):
+            return
+        volume = sum(qty for _, qty in self.recent_ry_fills)
+        if volume >= self.cfg.min_window_fills:
+            return
+        self.tight_ladder = True
+        # Persist cancellation obligations across errors; no mixed old/new ladder.
+        self.requote_orders = {o.id for o in self.ledger.active('RY')}
+        self.record.emit('ladder_tightened', tick=self.tick, window=self.cfg.fill_window,
+                         confirmed_shares=volume, offsets=self.cfg.tight_offsets)
+        print(f't={self.tick:.1f}: RY filled {volume:,} shares in the last '
+              f'{self.cfg.fill_window:g} ticks; switching to tighter ladder '
+              f'{self.cfg.tight_offsets}.')
+
     def manage(self, ticker):
         if ticker != 'RY':
             return
@@ -296,6 +323,7 @@ class Bot:
             for o in list(self.ledger.active(ticker)):
                 self.cancel(o, 'invalid_book')
             return
+        self.check_fill_activity()
         now = self.clock()
         pos = self.ledger.positions[ticker]
         if not pos:
@@ -315,13 +343,14 @@ class Bot:
             self.blocked_until[blocked] = now+self.cfg.trend_pause
         blocked = {a for a, until in self.blocked_until.items() if now < until}
         targets = ladder(snap, pos, self.cfg, age, self.mode, self.cautious, blocked,
-                         {a: self.penalty(ticker, a) for a in ('BUY', 'SELL')})
+                         {a: self.penalty(ticker, a) for a in ('BUY', 'SELL')},
+                         offsets=self.cfg.tight_offsets if self.tight_ladder else None)
         changed = False
         for o in list(self.ledger.active(ticker)):
             slot = self.slots.get(o.id)
             target = targets.get(slot)
             # Cancel for risk immediately; preserve queue for small fair-price changes.
-            cancel = target is None or o.remaining > target[1]
+            cancel = o.id in self.requote_orders or target is None or o.remaining > target[1]
             if target is not None:
                 sign = 1 if o.action == 'BUY' else -1
                 if sign*pos >= 0:
@@ -332,7 +361,9 @@ class Bot:
                            now-o.born >= self.cfg.reprice_delay)
             if cancel:
                 self.cancel(o, 'ladder_refresh')
+                self.requote_orders.discard(o.id)
                 changed = True
+        self.requote_orders.intersection_update(o.id for o in self.ledger.active('RY'))
         if changed:
             # Cancellation can race with fills: make all decisions again next cycle.
             return
