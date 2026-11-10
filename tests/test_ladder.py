@@ -73,14 +73,14 @@ class LadderTests(unittest.TestCase):
 
     def test_manage_only_ry_and_preserves_unchanged_queue(self):
         from tests.exchange import Exchange
-        x=Exchange(); b=Bot(x,clock=lambda:x.now)
+        x=Exchange(); b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
         b.manage('CNR'); self.assertEqual(x.calls,0)
         b.manage('RY'); self.assertEqual(len(x.orders),8)
         b.manage('RY'); self.assertEqual(len(x.orders),8); self.assertEqual(x.cancels,0)
 
     def test_brake_cancels_existing_bids_before_new_orders(self):
         from tests.exchange import Exchange
-        x=Exchange(); b=Bot(x,Config(inventory_throttle=True),clock=lambda:x.now); b.manage('RY')
+        x=Exchange(); b=Bot(x,Config(inventory_throttle=True,child_order_size=5000),clock=lambda:x.now); b.manage('RY')
         buys=[o for o in x.orders.values() if o['action']=='BUY']
         for o in buys[:3]:
             x.fill(o,o['quantity'],o['price'],True)
@@ -89,7 +89,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(len(x.orders),before)
 
     def test_cancel_race_replans_before_submitting(self):
-        b=Bot(Mock(),clock=lambda:2)
+        b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:2)
         b.book=Mock(return_value=({'bids':[(10,1000)],'asks':[(10.02,1000)]},2))
         b.ledger.orders[1]=Order(1,'RY','BUY',1500,10.10,0)
         b.slots[1]=('BUY',0)
@@ -101,7 +101,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(b.ledger.positions['RY'],1500)
 
     def test_pauses_bids_after_downward_mid_move(self):
-        b=Bot(Mock(),clock=lambda:2)
+        b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:2)
         b.mid_history=[(.5,10.15)]
         b.book=Mock(return_value=({'bids':[(10,1000)],'asks':[(10.02,1000)]},2))
         b.submit=Mock(return_value=None)
@@ -115,7 +115,7 @@ class LifecycleIntegrationTests(unittest.TestCase):
     def test_reduce_phase_submits_passive_inventory_exit(self):
         from tests.exchange import Exchange
         x=Exchange();x.now=276;x.positions['RY']=500
-        b=Bot(x,clock=lambda:x.now);b.mode='REDUCE';b.tick=276;b.case_seen=276
+        b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now);b.mode='REDUCE';b.tick=276;b.case_seen=276
         b.ledger.positions['RY']=500
         b.manage('RY')
         self.assertEqual(len(x.orders),1)
@@ -134,7 +134,7 @@ class LifecycleIntegrationTests(unittest.TestCase):
         self.assertFalse(x.orders)
 
     def test_reducing_order_cannot_cross_inventory_on_synchronous_fill(self):
-        b=Bot(Mock(),clock=lambda:1);b.ledger.positions['RY']=500
+        b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:1);b.ledger.positions['RY']=500
         b.book=Mock(return_value=({'bids':[(10,1000)],'asks':[(10.02,1000)]},1))
         def submit(*args):
             b.ledger.positions['RY']=0

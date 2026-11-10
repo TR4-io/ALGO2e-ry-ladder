@@ -8,6 +8,8 @@ class Config:
     offsets: tuple = (.02, .04, .08, .15)
     sizes: tuple = (5000, 4000, 2500, 1000)
     tight_offsets: tuple = (.02, .03, .05, .08)
+    child_order_size: int = 500
+    max_submit_batch: int = 8
     tighten_after: float = 50
     fill_window: float = 20
     min_window_fills: int = 1000
@@ -89,6 +91,12 @@ class Config:
         if not (0 < self.inventory_brake < self.stock_budget <= 25000 and
                 self.stock_budget <= self.gross_budget <= 25000 and 0 < self.net_budget <= 25000):
             raise ValueError('Invalid position budgets')
+        if type(self.child_order_size) is not int or not 250 <= self.child_order_size <= 5000:
+            raise ValueError('child_order_size must be an integer from 250 to 5000')
+        if type(self.max_submit_batch) is not int or not 1 <= self.max_submit_batch <= 16:
+            raise ValueError('max_submit_batch must be an integer from 1 to 16')
+        if 2*sum(math.ceil(size/self.child_order_size) for size in self.sizes) > 100:
+            raise ValueError('Split ladder exceeds 100 resting child orders')
         if sum(self.sizes) > self.stock_budget or not 0 < self.exit_clip <= 5000:
             raise ValueError('Ladder exceeds stock budget or invalid exit clip')
         if not 0 < self.last_entry < self.flatten_at < self.end_tick <= 300:

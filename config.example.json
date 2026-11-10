@@ -17,6 +17,8 @@
     0.05,
     0.08
   ],
+  "child_order_size": 500,
+  "max_submit_batch": 8,
   "tighten_after": 50,
   "fill_window": 20,
   "min_window_fills": 1000,

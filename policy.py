@@ -80,3 +80,26 @@ def ladder(snap, pos, cfg, age=0, mode='MAKE', cautious=False, blocked=(), penal
             side_remaining -= qty
             seen.add(price)
     return targets
+
+
+def split_targets(targets, child_size):
+    """Stable child slots preserve queue position and independent replenishment."""
+    result = {}
+    for slot, (price, quantity) in targets.items():
+        if slot[1] == -1 or quantity <= child_size:
+            result[slot] = (price, quantity)
+            continue
+        for child, start in enumerate(range(0, quantity, child_size)):
+            result[(*slot, child)] = (price, min(child_size, quantity-start))
+    return result
+
+
+def submission_targets(targets, position):
+    reducing = 'SELL' if position > 0 else 'BUY'
+    if any(len(slot) == 3 for slot in targets):
+        # Inner levels first, alternating sides so a capped batch cannot spend
+        # all its dispatch slots on buys before placing any sells.
+        return sorted(targets.items(), key=lambda item: (
+            item[0][1], item[0][2] if len(item[0]) == 3 else 0,
+            item[0][0] != reducing))
+    return sorted(targets.items(), key=lambda item: item[0][0] != reducing)

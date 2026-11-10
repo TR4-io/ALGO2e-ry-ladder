@@ -4,6 +4,7 @@ from engine import Bot as SerialBot, MissingOrder
 from execution import (ApiError, HttpError, UnknownWrite, Order, integer, capacity,
                        clean_book)
 from concurrent_client import ExpiredQuote
+from policy import submission_targets
 
 
 class Bot(SerialBot):
@@ -137,28 +138,33 @@ class Bot(SerialBot):
             cutoff = self.cfg.entry_cutoff if self.mode == 'MAKE' else self.cfg.end_tick
             deadline = min(deadline, self.case_seen+max(0,cutoff-self.tick))
         if self.clock() >= deadline or self.stopping:
+            self.note_activity('stopping' if self.stopping else 'decision_expired',
+                               book_age=round(self.clock()-observed, 3))
             return
         planned = []
         reservations = list(self.ledger.active())
-        sides = ('SELL','BUY') if pos > 0 else ('BUY','SELL')
-        for side in sides:
-            for slot,(price,wanted) in targets.items():
-                if slot[0] != side or any(self.slots.get(o.id)==slot for o in self.ledger.active(ticker)):
-                    continue
-                if any(o.ticker==ticker and o.action!=side and
-                       (price >= o.price if side=='BUY' else price <= o.price) for o in reservations):
-                    continue
-                qty = capacity(self.ledger.positions,reservations,ticker,side,wanted,
-                               self.gross_limit,self.net_limit,self.cfg.stock_budget)
-                if not qty:
-                    continue
-                candidate = Order(-1-len(planned),ticker,side,qty,price,self.clock())
-                reservations.append(candidate)
-                planned.append((slot,candidate))
+        for slot,(price,wanted) in submission_targets(targets, pos):
+            side = slot[0]
+            if any(self.slots.get(o.id)==slot for o in self.ledger.active(ticker)):
+                continue
+            if len(planned) >= self.cfg.max_submit_batch:
+                break
+            if any(o.ticker==ticker and o.action!=side and
+                   (price >= o.price if side=='BUY' else price <= o.price) for o in reservations):
+                continue
+            qty = capacity(self.ledger.positions,reservations,ticker,side,wanted,
+                           self.gross_limit,self.net_limit,self.cfg.stock_budget)
+            if not qty:
+                continue
+            candidate = Order(-1-len(planned),ticker,side,qty,price,self.clock())
+            reservations.append(candidate)
+            planned.append((slot,candidate))
         if not planned:
+            self.note_activity('resting_or_capacity_blocked')
             return
         # Reserve the entire batch before dispatch. Every combination of fills fits.
         # No other thread can update the ledger or issue strategy orders while awaiting.
+        self.note_activity('submitting_batch', planned=len(planned))
         self.inflight = [order for _,order in planned]
         batch = self.transport.batch([('POST','orders',dict(ticker=ticker,action=o.action,
                                       type='LIMIT',quantity=o.quantity,price=o.price)) for _,o in planned],
@@ -183,13 +189,17 @@ class Bot(SerialBot):
                 self.record.emit('submit',tick=self.tick,order_id=oid,ticker=ticker,action=o.action,
                                  quantity=o.quantity,price=o.price,intent=self.mode)
                 self.record.emit('ladder_order',tick=self.tick,order_id=oid,level=slot[1],
-                                 side=o.action,inventory_age=age)
+                                 child=slot[2] if len(slot) == 3 else None, side=o.action,inventory_age=age)
                 self.update(result)
             except (KeyError, ValueError, TypeError) as exc:
                 unresolved.append(reservation)
                 self.write_uncertain = True
                 errors.append(UnknownWrite('Accepted batch order could not be reconciled; never replay'))
         self.inflight = unresolved
+        expired = sum(isinstance(r, ExpiredQuote) for r in batch.results)
+        self.note_activity('submission_error' if errors else 'queued_quotes_expired' if expired else 'submitted',
+                           planned=len(planned), expired=expired,
+                           effective_request_cap=self.transport.metrics().get('effective_request_cap'))
         # Process every sibling result before failing: cleanup must see accepted IDs.
         if errors:
             raise next((e for e in errors if isinstance(e,UnknownWrite)),errors[0])

@@ -9,7 +9,7 @@ from config import Config
 from execution import (ApiError, HttpError, UnknownWrite, Order, Ledger, TICKERS,
                        MAKER_REBATE, integer, capacity, clean_book)
 from signals import Market
-from policy import phase, sweep, ladder
+from policy import phase, sweep, ladder, split_targets, submission_targets
 
 
 class MissingOrder(ApiError):
@@ -66,6 +66,15 @@ class Bot:
         self.fill_monitor_started = None
         self.tight_ladder = False
         self.requote_orders = set()
+        self.activity = dict(reason="startup", open_orders=0, pending_buy=0, pending_sell=0, position=0, observed=self.clock())
+
+    def note_activity(self, reason, **details):
+        # Publish one immutable-by-convention snapshot for the heartbeat thread.
+        active = self.ledger.active('RY')
+        self.activity = dict(reason=reason, open_orders=len(active),
+                             pending_buy=sum(o.remaining for o in active if o.action == 'BUY'),
+                             pending_sell=sum(o.remaining for o in active if o.action == 'SELL'),
+                             position=self.ledger.positions['RY'], observed=self.clock(), **details)
 
     def securities(self):
         rows = {r['ticker']: r for r in self.api('GET', 'securities')}
@@ -322,11 +331,14 @@ class Bot:
             return
         book, observed = self.book(ticker)
         if self.mode == 'EXIT':
+            self.note_activity('exit_mode', stop_reason=self.stop_reason)
             self.manage_exit(ticker, book, observed)
             return
         snap = self.observe(ticker, book, observed)
         if snap is None or snap.spread > self.cfg.max_spread:
-            self.record.emit('quote_blocked', tick=self.tick, reason='stale_or_invalid_book' if snap is None else 'wide_spread')
+            self.note_activity('stale_or_invalid_book' if snap is None else 'wide_spread',
+                               book_age=round(self.clock()-observed, 3))
+            self.record.emit('quote_blocked', tick=self.tick, reason=self.activity['reason'])
             self.cancel_many(list(self.ledger.active(ticker)), 'invalid_book')
             return
         self.check_fill_activity()
@@ -351,6 +363,7 @@ class Bot:
         targets = ladder(snap, pos, self.cfg, age, self.mode, self.cautious, blocked,
                          {a: self.penalty(ticker, a) for a in ('BUY', 'SELL')},
                          offsets=self.cfg.tight_offsets if self.tight_ladder else None)
+        targets = split_targets(targets, self.cfg.child_order_size)
         cancellations = []
         for o in list(self.ledger.active(ticker)):
             slot = self.slots.get(o.id)
@@ -368,26 +381,37 @@ class Bot:
             if cancel:
                 cancellations.append(o)
         if cancellations:
+            self.note_activity('confirming_cancellations', cancel_count=len(cancellations))
             self.cancel_many(cancellations, 'ladder_refresh')
         self.requote_orders.intersection_update(o.id for o in self.ledger.active('RY'))
         if cancellations:
             # Cancellation can race with fills: make all decisions again next cycle.
+            self.note_activity('cancelled_replan_next_cycle')
+            return
+        if not targets:
+            self.note_activity('no_eligible_quotes', blocked_sides=sorted(blocked))
             return
         self.place_targets(ticker, targets, pos, observed, age)
 
     def place_targets(self, ticker, targets, pos, observed, age):
-        sides = ('SELL', 'BUY') if pos > 0 else ('BUY', 'SELL')
-        for side in sides:
-            for slot, (price, qty) in targets.items():
-                if slot[0] != side or any(self.slots.get(o.id) == slot for o in self.ledger.active(ticker)):
-                    continue
-                if self.ledger.positions[ticker] != pos:
-                    return  # A synchronous fill invalidates the inventory-based plan.
-                order = self.submit(ticker, side, qty, price, self.mode, observed)
-                if order:
-                    self.slots[order.id] = slot
-                    self.record.emit('ladder_order', tick=self.tick, order_id=order.id,
-                                     level=slot[1], side=side, inventory_age=age)
+        submitted = 0
+        for slot, (price, qty) in submission_targets(targets, pos):
+            side = slot[0]
+            if any(self.slots.get(o.id) == slot for o in self.ledger.active(ticker)):
+                continue
+            if submitted >= self.cfg.max_submit_batch:
+                break
+            if self.ledger.positions[ticker] != pos:
+                self.note_activity('fill_replan_next_cycle')
+                return  # A synchronous fill invalidates the inventory-based plan.
+            order = self.submit(ticker, side, qty, price, self.mode, observed)
+            if order:
+                submitted += 1
+                self.slots[order.id] = slot
+                self.record.emit('ladder_order', tick=self.tick, order_id=order.id,
+                                 level=slot[1], child=slot[2] if len(slot) == 3 else None,
+                                 side=side, inventory_age=age)
+        self.note_activity('submitted' if submitted else 'resting_or_capacity_blocked', submitted=submitted)
 
     def step(self):
         self.case_seen = self.clock()
@@ -400,6 +424,7 @@ class Bot:
             raise ApiError('Case reset: restart this process for the next run')
         self.tick = tick
         if case['status'] != 'ACTIVE' or tick >= self.cfg.end_tick:
+            self.note_activity('case_inactive', case_status=case['status'])
             self.cancel_all()
             return not (self.active_seen or self.stopping or tick >= self.cfg.end_tick)
         self.active_seen = True

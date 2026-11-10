@@ -79,3 +79,11 @@ Defaults now quote per-side offsets 2/4/8/15 cents with sizes 5,000/4,000/2,500/
 All 84 tests passed. New regressions verify repeated same-side full-fill replenishment in both serial and concurrent engines while opposite orders retain their original IDs, continued replenishment until the 25,000-share capacity ceiling, and preservation of the nearest opposite quote with the required fee margin. Existing all-5,000-share tests explicitly retain that supported configuration.
 
 All 25 synthetic stress rounds completed with maximum sampled absolute inventory of 25,000 shares; 4 triggered loss stops and 21 ended with residual inventory. These mechanical checks do not establish live fill rates or profit improvement. No live RIT trades were run.
+
+## Fifty resting child orders and no-order diagnostics
+
+The default 500-share child size divides the existing 12,500-share-per-side ladder into up to 25 orders per side. Submission is capped at eight orders per cycle, prioritizes inner levels, and alternates sides. Total price-level allocations, request cap and position limits are unchanged. A 5,000-share child size retains the legacy single-order-per-level mode.
+
+All 92 tests passed. New coverage establishes all 50 resting orders in both engines, verifies the eight-order batch bound and balanced first batch, replaces individual filled children without cancelling siblings, preserves partially filled children, checks exact split remainders, confirms fills racing with cancellation of all 50 orders, and exercises independent-fill risk through the 25,000-share ceiling. Historical single-order tests now explicitly request the supported 5,000-share child mode; full-round integration exercises the new defaults. Heartbeat snapshots report no-order decisions including queued expiry, stale decision expiry and inactive cases.
+
+All 25 synthetic stress rounds completed with sampled absolute inventory at most 25,000; 4 triggered loss stops and 21 finished with residual inventory. No live RIT latency, fills or profitability were validated. The reported heartbeat-with-no-orders incident remains unconfirmed without the user's actual console line or log; increased order count is not claimed as its root-cause fix.

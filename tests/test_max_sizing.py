@@ -9,7 +9,7 @@ from tests.test_fast_execution import BatchExchange
 
 class MaxSizingTests(unittest.TestCase):
     def test_all_independent_full_fill_combinations_with_max_clips(self):
-        x=BatchExchange();b=Bot(x,Config(sizes=(5000,5000,5000,5000)),clock=lambda:x.now)
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,5000,5000,5000),child_order_size=5000),clock=lambda:x.now)
         b.manage('RY')
         orders=list(b.ledger.active())
         self.assertEqual(len(orders),8)
@@ -23,7 +23,7 @@ class MaxSizingTests(unittest.TestCase):
             def call(self,method,path,**params):
                 if path=='limits':return [dict(gross_limit=10000,net_limit=8000)]
                 return super().call(method,path,**params)
-        x=LowerLimits();b=Bot(x,Config(sizes=(5000,5000,5000,5000)),clock=lambda:x.now)
+        x=LowerLimits();b=Bot(x,Config(sizes=(5000,5000,5000,5000),child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):b.start();b.step()
         self.assertEqual((b.gross_limit,b.net_limit),(10000,8000))
         low,high,gross,net=risk_bounds(b.ledger.positions,b.ledger.active())
@@ -32,7 +32,7 @@ class MaxSizingTests(unittest.TestCase):
         self.assertTrue(all(o.quantity<=5000 for o in b.ledger.active()))
 
     def test_full_sweep_then_adverse_move_liquidates_entire_position(self):
-        x=BatchExchange();b=Bot(x,Config(sizes=(5000,5000,5000,5000)),clock=lambda:x.now)
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,5000,5000,5000),child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start();b.step()
             for o in x.orders.values():

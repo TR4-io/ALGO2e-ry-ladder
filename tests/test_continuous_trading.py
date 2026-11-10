@@ -44,7 +44,7 @@ class ContinuousTradingTests(unittest.TestCase):
         self.assertTrue(all(q == Config().sizes[i] for (side,i),(p,q) in plan.items()))
 
     def test_active_299_places_orders_300_cancels_without_new_entries(self):
-        x=BatchExchange();x.now=299;b=Bot(x,clock=lambda:x.now)
+        x=BatchExchange();x.now=299;b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start();self.assertTrue(b.step())
             self.assertEqual(len(x.orders),8)
@@ -53,7 +53,7 @@ class ContinuousTradingTests(unittest.TestCase):
         self.assertFalse(b.ledger.active())
 
     def test_case_close_can_leave_inventory_and_does_not_submit_liquidation(self):
-        x=BatchExchange();x.now=299;b=Bot(x,clock=lambda:x.now)
+        x=BatchExchange();x.now=299;b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start();b.step()
             buy=next(o for o in x.orders.values() if o['action']=='BUY')

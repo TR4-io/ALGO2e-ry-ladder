@@ -16,7 +16,7 @@ class ReplenishmentTests(unittest.TestCase):
                 with self.subTest(backend=backend.__module__, side=side):
                     x = BatchExchange()
                     # Isolate replenishment from intentional price-recentering.
-                    b = backend(x, Config(skew=0), clock=lambda: x.now)
+                    b = backend(x, Config(skew=0,child_order_size=5000), clock=lambda: x.now)
                     with contextlib.redirect_stdout(io.StringIO()):
                         b.start()
                         b.step()
@@ -37,7 +37,7 @@ class ReplenishmentTests(unittest.TestCase):
 
     def test_repeated_fill_replenishment_respects_capacity_until_limit(self):
         x = BatchExchange()
-        b = Bot(x, Config(skew=0), clock=lambda: x.now)
+        b = Bot(x, Config(skew=0,child_order_size=5000), clock=lambda: x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start()
             b.step()

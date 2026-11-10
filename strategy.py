@@ -27,8 +27,13 @@ class Heartbeat:
 
     def report(self):
         stage, started = self.state
+        activity = self.bot.activity
+        details = {k:v for k,v in activity.items() if k not in ('observed', 'reason')}
         print(f'HEARTBEAT: tick={self.bot.tick:g} mode={self.bot.mode} '
-              f'{stage}; elapsed={time.monotonic()-started:.1f}s', flush=True)
+              f'{stage}; elapsed={time.monotonic()-started:.1f}s; '
+              f'last_decision={activity["reason"]} '
+              f'decision_age={max(0,self.bot.clock()-activity["observed"]):.1f}s '
+              f'{details}', flush=True)
 
     def run(self):
         while not self.done.wait(5):

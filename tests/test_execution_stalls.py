@@ -1,3 +1,4 @@
+from config import Config
 import contextlib
 import io
 import json
@@ -37,7 +38,7 @@ class StallTests(unittest.TestCase):
     def test_slow_reconciliation_refreshes_book_and_still_quotes(self):
         x = BatchExchange()
         log = io.StringIO()
-        bot = Bot(x, recorder=Recorder(log), clock=lambda: x.now)
+        bot = Bot(x, Config(child_order_size=5000), recorder=Recorder(log), clock=lambda: x.now)
         real = bot.reconcile
         def slow_reconcile():
             real()
@@ -51,7 +52,7 @@ class StallTests(unittest.TestCase):
 
     def test_slow_fresh_book_still_blocks_stale_orders(self):
         x = BatchExchange()
-        bot = Bot(x, clock=lambda: x.now)
+        bot = Bot(x, Config(child_order_size=5000), clock=lambda: x.now)
         real_reconcile, real_api = bot.reconcile, bot.raw_api
         def slow_reconcile():
             real_reconcile()
@@ -69,7 +70,7 @@ class StallTests(unittest.TestCase):
 
     def test_zero_inventory_status_distinguishes_resting_orders(self):
         x = BatchExchange()
-        bot = Bot(x, clock=lambda: x.now)
+        bot = Bot(x, Config(child_order_size=5000), clock=lambda: x.now)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             bot.start()
@@ -81,7 +82,7 @@ class StallTests(unittest.TestCase):
     def test_drawdown_stop_has_explicit_reason(self):
         x = BatchExchange()
         log, out = io.StringIO(), io.StringIO()
-        bot = Bot(x, recorder=Recorder(log), clock=lambda: x.now)
+        bot = Bot(x, Config(child_order_size=5000), recorder=Recorder(log), clock=lambda: x.now)
         with contextlib.redirect_stdout(out):
             bot.start()
             bot.peak = 1000
@@ -92,7 +93,7 @@ class StallTests(unittest.TestCase):
 
     def test_heartbeat_reports_without_tick_progress_or_api_calls(self):
         x = BatchExchange()
-        bot = Bot(x, clock=lambda: x.now)
+        bot = Bot(x, Config(child_order_size=5000), clock=lambda: x.now)
         beat = Heartbeat(bot)
         with patch('strategy.time.monotonic', return_value=100):
             beat.stage('reading/reconciling/quoting')
