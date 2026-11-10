@@ -349,17 +349,8 @@ class Bot:
         elif self.inventory_since is None:
             self.inventory_since = now
         age = 0 if self.inventory_since is None else now-self.inventory_since
-        # Net movement, not candle extremes. Reset after a data gap.
-        if self.mid_history and now-self.mid_history[-1][0] > 2:
-            self.mid_history.clear()
-        self.mid_history.append((now, snap.mid))
-        while len(self.mid_history) > 1 and now-self.mid_history[0][0] > self.cfg.trend_window:
-            self.mid_history.pop(0)
-        drift = snap.mid-self.mid_history[0][1]
-        if abs(drift) >= self.cfg.trend_move:
-            blocked = 'BUY' if drift < 0 else 'SELL'
-            self.blocked_until[blocked] = now+self.cfg.trend_pause
-        blocked = {a for a, until in self.blocked_until.items() if now < until}
+        # No trend-triggered side suppression or timed re-entry pause.
+        blocked = set()
         targets = ladder(snap, pos, self.cfg, age, self.mode, self.cautious, blocked,
                          {a: self.penalty(ticker, a) for a in ('BUY', 'SELL')},
                          offsets=self.cfg.tight_offsets if self.tight_ladder else None)

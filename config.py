@@ -33,9 +33,10 @@ class Config:
     skew: float = .03
     recenter_move: float = .03
     reprice_delay: float = .8
+    # Deprecated compatibility fields: trend-based pauses are no longer used.
     trend_window: float = 2
     trend_move: float = .06
-    trend_pause: float = 3
+    trend_pause: float = 0
     max_widening: float = .04
     min_edge: float = .01
     poll_seconds: float = .02
@@ -116,8 +117,7 @@ class Config:
             raise ValueError('io_workers must be an integer from 1 to 8')
         if not 0 < self.poll_seconds <= self.max_book_age <= 2:
             raise ValueError('Invalid polling settings')
-        if not (0 < self.recenter_move and 0 < self.inventory_age and 0 < self.trend_window
-                and 0 < self.trend_move and 0 < self.trend_pause):
+        if not (0 < self.recenter_move and 0 < self.inventory_age):
             raise ValueError('Invalid management thresholds')
         if not self.soft_loss < self.hard_loss or self.exit_slippage > self.urgent_slippage or self.volume_buffer > 1:
             raise ValueError('Invalid loss, slippage or volume settings')

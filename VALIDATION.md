@@ -104,3 +104,11 @@ The offline real-worker transport benchmark (8 seconds per setting) produced:
 | 50 ms | 20/s | 4.391 s | 5 | 0.666 s |
 
 Both runs stayed within their rolling-second request budgets and cleaned up all orders. Fills were injected; results do not imply actual RIT fills every second. No live RIT orders or latency measurements were performed.
+
+## Remove trend-triggered pausing
+
+Removed the midpoint-move side blocks and their re-entry timers from both continuous-v2 and legacy management. Rises, falls and reversals no longer suppress either side. Legacy trend settings remain accepted but are ignored, including positive pause values supplied by old JSON files. Independent replenishment, live risk ceilings, data/fee checks and explicit loss stops are unchanged.
+
+New regression tests exercise repeated fast reversals with both sides eligible while flat, verify that neither management path supplies trend-blocked sides, and retain hard-limit enforcement. The old regression requiring buys to pause was updated to require both sides instead.
+
+All 118 tests passed after this change; compilation and diff checks passed. No live RIT orders were submitted during validation.

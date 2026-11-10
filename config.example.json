@@ -44,7 +44,7 @@
   "reprice_delay": 0.8,
   "trend_window": 2,
   "trend_move": 0.06,
-  "trend_pause": 3,
+  "trend_pause": 0,
   "max_widening": 0.04,
   "min_edge": 0.01,
   "poll_seconds": 0.02,

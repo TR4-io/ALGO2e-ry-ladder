@@ -100,14 +100,14 @@ class LadderTests(unittest.TestCase):
         b.manage('RY'); b.submit.assert_not_called()
         self.assertEqual(b.ledger.positions['RY'],1500)
 
-    def test_pauses_bids_after_downward_mid_move(self):
+    def test_keeps_both_sides_after_downward_mid_move(self):
         b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:2)
         b.mid_history=[(.5,10.15)]
         b.book=Mock(return_value=({'bids':[(10,1000)],'asks':[(10.02,1000)]},2))
         b.submit=Mock(return_value=None)
         b.manage('RY')
         self.assertTrue(b.submit.call_args_list)
-        self.assertTrue(all(c.args[1]=='SELL' for c in b.submit.call_args_list))
+        self.assertEqual({c.args[1] for c in b.submit.call_args_list}, {'BUY', 'SELL'})
 
 if __name__=='__main__': unittest.main()
 

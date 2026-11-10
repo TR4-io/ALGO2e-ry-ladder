@@ -51,7 +51,7 @@ From tick 50 onward, fewer than 1,000 confirmed RY shares over the trailing 20 t
 
 - Stock, gross and net budgets are 25,000 shares, clamped to any lower live limits. Each individual order is at most 5,000 shares. Pending cancellations remain fully reserved. At the hard position ceiling, additional inventory-increasing orders must wait for capacity to be freed.
 - No default wind-down at ticks 275/280 and no default 15,000-share inventory brake, age-based exit or inventory-based quantity reduction. `scheduled_closeout` and `inventory_throttle` remain optional. Price skew still reflects inventory.
-- A six-cent midpoint move over two seconds temporarily blocks the adverse inventory-adding side for three seconds. Fee and stale-data checks remain active.
+- **No trend-triggered pauses:** rises, drops and reversals never disable a quote side or start a re-entry timer. The old `trend_window`, `trend_move` and `trend_pause` settings are accepted for compatibility but ignored. Inventory skew and volatility may still change prices; fee, hard-capacity and stale-data checks remain active.
 - A $500 run loss reduces new exposure; a $1,500 loss or $900 drawdown after a $500 profit peak triggers an explicit `RISK STOP` and liquidation. These are trigger thresholds, not guaranteed loss caps.
 - Ctrl+C once requests liquidation; twice exits immediately with best-effort cleanup. Case end stops new orders and cancels outstanding orders. Without scheduled liquidation, residual inventory can remain at close.
 - A reset prevents cancellation of old IDs in a new round. Persistently unresolved order/position accounting stops new exposure; fills are never inferred from a missing order or cancellation acknowledgement.

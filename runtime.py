@@ -140,18 +140,9 @@ class Bot(AccountingBot):
             return None, None
         self.check_fill_activity()
         now = self.clock()
-        if self.mid_history and now-self.mid_history[-1][0] > 2:
-            self.mid_history.clear()
-        self.mid_history.append((now, snap.mid))
-        while len(self.mid_history) > 1 and now-self.mid_history[0][0] > self.cfg.trend_window:
-            self.mid_history.pop(0)
-        drift = snap.mid-self.mid_history[0][1]
-        if abs(drift) >= self.cfg.trend_move:
-            self.blocked_until['BUY' if drift < 0 else 'SELL'] = now+self.cfg.trend_pause
-        blocked = {side for side, until in self.blocked_until.items() if now < until}
         pos = self.ledger.positions['RY']
         age = 0 if not pos or self.inventory_since is None else now-self.inventory_since
-        plan = ladder(snap, pos, self.cfg, age, self.mode, self.cautious, blocked,
+        plan = ladder(snap, pos, self.cfg, age, self.mode, self.cautious, (),
                       {side: self.penalty('RY', side) for side in ('BUY', 'SELL')},
                       offsets=self.cfg.tight_offsets if self.tight_ladder else None)
         children = split_targets(plan, self.cfg.child_order_size)
