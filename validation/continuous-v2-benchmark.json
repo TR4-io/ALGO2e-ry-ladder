@@ -1,0 +1,30 @@
+[
+  {
+    "artificial_latency_ms": 20.0,
+    "request_cap": 60,
+    "benchmark_seconds": 8,
+    "seconds_to_50_orders": 1.3929184589069337,
+    "submissions": 56,
+    "confirmed_fill_shares": 3000,
+    "tested_replenishments": 6,
+    "refill_seconds_max": 0.1026972079416737,
+    "refill_seconds_mean": 0.09983377781463787,
+    "open_before_cleanup": 50,
+    "max_requests_in_rolling_second": 60,
+    "note": "Artificial local exchange; not measured on a live RIT server."
+  },
+  {
+    "artificial_latency_ms": 50.0,
+    "request_cap": 20,
+    "benchmark_seconds": 8,
+    "seconds_to_50_orders": 4.391245875041932,
+    "submissions": 55,
+    "confirmed_fill_shares": 2500,
+    "tested_replenishments": 5,
+    "refill_seconds_max": 0.6662435419857502,
+    "refill_seconds_mean": 0.3777630999917164,
+    "open_before_cleanup": 50,
+    "max_requests_in_rolling_second": 20,
+    "note": "Artificial local exchange; not measured on a live RIT server."
+  }
+]

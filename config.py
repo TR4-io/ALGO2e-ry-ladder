@@ -10,6 +10,10 @@ class Config:
     tight_offsets: tuple = (.02, .03, .05, .08)
     child_order_size: int = 500
     max_submit_batch: int = 8
+    max_cancel_batch: int = 8
+    reconcile_timeout: float = 5
+    cancel_retry_seconds: float = 1
+    telemetry_seconds: float = 1
     tighten_after: float = 50
     fill_window: float = 20
     min_window_fills: int = 1000
@@ -95,6 +99,11 @@ class Config:
             raise ValueError('child_order_size must be an integer from 250 to 5000')
         if type(self.max_submit_batch) is not int or not 1 <= self.max_submit_batch <= 16:
             raise ValueError('max_submit_batch must be an integer from 1 to 16')
+        if type(self.max_cancel_batch) is not int or not 1 <= self.max_cancel_batch <= 16:
+            raise ValueError('max_cancel_batch must be an integer from 1 to 16')
+        if not (0 < self.reconcile_timeout <= 30 and 0 < self.cancel_retry_seconds <= 5
+                and .2 <= self.telemetry_seconds <= 10):
+            raise ValueError('Invalid runtime timing settings')
         if 2*sum(math.ceil(size/self.child_order_size) for size in self.sizes) > 100:
             raise ValueError('Split ladder exceeds 100 resting child orders')
         if sum(self.sizes) > self.stock_budget or not 0 < self.exit_clip <= 5000:

@@ -87,3 +87,20 @@ The default 500-share child size divides the existing 12,500-share-per-side ladd
 All 92 tests passed. New coverage establishes all 50 resting orders in both engines, verifies the eight-order batch bound and balanced first batch, replaces individual filled children without cancelling siblings, preserves partially filled children, checks exact split remainders, confirms fills racing with cancellation of all 50 orders, and exercises independent-fill risk through the 25,000-share ceiling. Historical single-order tests now explicitly request the supported 5,000-share child mode; full-round integration exercises the new defaults. Heartbeat snapshots report no-order decisions including queued expiry, stale decision expiry and inactive cases.
 
 All 25 synthetic stress rounds completed with sampled absolute inventory at most 25,000; 4 triggered loss stops and 21 finished with residual inventory. No live RIT latency, fills or profitability were validated. The reported heartbeat-with-no-orders incident remains unconfirmed without the user's actual console line or log; increased order count is not claimed as its root-cause fix.
+
+## Continuous-v2 runtime rebuild
+
+The default CLI now runs `runtime.py`, replacing the former default's step/reconcile/cancel/place lifecycle. It retains shared fill accounting and quote policy helpers; the old runtime paths remain solely for regression coverage. `--serial` selects one worker for the same new runtime. See `REVIEW.md` for findings and regression evidence.
+
+The complete **115-test suite passed**, including the added regressions for known rejection with accepted siblings, interruption after accepted submissions, non-monotonic order snapshots, live-script module refresh, timed request dispatch and uncertain cancellation recovery. `python3 -m compileall -q .` and `git diff --check` also passed.
+
+All 25 continuous-v2 synthetic stress rounds completed, with sampled absolute inventory at most 25,000, 5 configured loss-stop rounds, and 19 rounds ending with residual inventory. Default scheduled liquidation remains disabled. Final confirmed fills/positions agree with the synthetic exchange. Full results are in `validation/continuous-v2-stress.json`; these are uncalibrated mechanics tests, not performance forecasts.
+
+The offline real-worker transport benchmark (8 seconds per setting) produced:
+
+| Artificial response latency | Request cap | Build 50 resting orders | Tested replenishments | Slowest tested refill |
+|---|---:|---:|---:|---:|
+| 20 ms | 60/s | 1.393 s | 6 | 0.103 s |
+| 50 ms | 20/s | 4.391 s | 5 | 0.666 s |
+
+Both runs stayed within their rolling-second request budgets and cleaned up all orders. Fills were injected; results do not imply actual RIT fills every second. No live RIT orders or latency measurements were performed.

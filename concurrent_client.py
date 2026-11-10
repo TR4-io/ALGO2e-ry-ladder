@@ -14,6 +14,7 @@ class ExpiredQuote(ApiError):
 class Batch:
     results: list
     interrupted: bool = False
+    started: list | None = None
 
 class Budget:
     """Global rolling-second budget, shared cooldown and adaptive 429 backoff."""
@@ -88,7 +89,7 @@ class ConcurrentClient(Client):
                 self.sessions.append(session)
         return self.local.session
 
-    def call(self, method, path, _deadline=None, _guard=None, **params):
+    def call(self, method, path, _deadline=None, _guard=None, _timing=None, **params):
         queued = time.monotonic()
         if _guard is not None and not _guard():
             raise ExpiredQuote('Decision withdrawn before dispatch')
@@ -98,6 +99,8 @@ class ConcurrentClient(Client):
         if method == 'POST' and path == 'orders' and self.uncertain_write.is_set():
             raise ExpiredQuote('New submission blocked after uncertain write')
         started = time.monotonic()
+        if _timing is not None:
+            _timing['started'] = started
         try:
             session = self._session()
             if _deadline is not None and time.monotonic() >= _deadline:
@@ -109,19 +112,23 @@ class ConcurrentClient(Client):
             self.budget.throttle(exc.wait)
             raise
         except UnknownWrite:
-            self.uncertain_write.set()
+            if method == "POST" and path == "orders":
+                self.uncertain_write.set()
             raise
         finally:
             with self.lock:
                 self.samples.append((started-queued, time.monotonic()-started))
 
-    def batch(self, calls, deadline=None, guard=None):
+    def batch(self, calls, deadline=None, guard=None, capture_timing=False):
         calls = list(calls)
         futures, results, interrupted = [], [], False
+        timings = [{} for _ in calls]
         try:
-            for method, path, params in calls:
-                futures.append(self.pool.submit(self.call, method, path, _deadline=deadline,
-                                                _guard=guard, **params))
+            for index, (method, path, params) in enumerate(calls):
+                options = dict(_deadline=deadline, _guard=guard)
+                if capture_timing:
+                    options['_timing'] = timings[index]
+                futures.append(self.pool.submit(self.call, method, path, **options, **params))
         except KeyboardInterrupt:
             interrupted = True
             for pending in futures:
@@ -144,7 +151,7 @@ class ConcurrentClient(Client):
                     break
         results.extend(ExpiredQuote('Batch interrupted before scheduling')
                        for _ in range(len(calls)-len(futures)))
-        return Batch(results, interrupted)
+        return Batch(results, interrupted, [t.get("started") for t in timings] if capture_timing else None)
 
     def metrics(self):
         with self.lock:

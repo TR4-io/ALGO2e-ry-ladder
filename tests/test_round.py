@@ -41,9 +41,14 @@ class LadderExchange(Exchange):
         return super().call(method,path,**params)
 
 
-def exercise(seed,regime,fast=False):
+def exercise(seed,regime,fast=False,runtime=False):
     x=LadderExchange(seed,regime)
-    if fast:
+    if runtime:
+        from tests.test_runtime import RuntimeExchange
+        from runtime import Bot as RuntimeBot
+        x=RuntimeExchange(seed,regime)
+        b=RuntimeBot(x,clock=lambda:x.now)
+    elif fast:
         from concurrent_client import Batch
         from fast_engine import Bot as FastBot
         def batch(calls,deadline=None,guard=None):
@@ -64,7 +69,15 @@ def exercise(seed,regime,fast=False):
             _,_,gross,net=risk_bounds(b.ledger.positions,b.ledger.active())
             assert gross<=b.gross_limit and net<=b.net_limit
             assert max(abs(v) for v in x.positions.values())<=b.cfg.stock_budget
-            assert x.positions==b.ledger.positions and x.volume==b.ledger.volume
+            if runtime:
+                # A fill racing a DELETE is confirmed in the next frame. Until
+                # then, every actual position must remain inside the reserved
+                # independent-fill envelope; unconfirmed volume is never invented.
+                low,high,_,_=risk_bounds(b.ledger.positions,b.ledger.active())
+                assert all(low[t]<=x.positions[t]<=high[t] for t in x.positions)
+                assert b.ledger.volume<=x.volume
+            else:
+                assert x.positions==b.ledger.positions and x.volume==b.ledger.volume
             assert all(o['ticker']=='RY' for o in x.orders.values())
             value=x.cash['RY']+x.positions['RY']*x.mid['RY']
             peak=max(peak,value);drawdown=max(drawdown,peak-value)
@@ -75,7 +88,7 @@ def exercise(seed,regime,fast=False):
     assert not b.ledger.active()
     assert x.positions == b.ledger.positions
     assert b.ledger.volume==x.volume
-    return dict(execution_backend='concurrent' if fast else 'serial',regime=regime,seed=seed,pnl=round(x.cash['RY'],2),volume=x.volume,
+    return dict(execution_backend='continuous-v2' if runtime else 'concurrent' if fast else 'serial',regime=regime,seed=seed,pnl=round(x.cash['RY']+x.positions['RY']*x.mid['RY'],2),volume=x.volume,
                 qualified=x.volume>=b.cfg.minimum_volume,max_inventory=max_inventory,
                 drawdown=round(drawdown,2),hard_stop=b.stopping,
                 residual=sum(map(abs,x.positions.values())),orders=len(x.orders),

@@ -1,12 +1,10 @@
-# ALGO2e RY ladder
+# ALGO2e RY ladder — continuous-v2
 
-A standalone RY excursion market maker derived from [TR4-io/ALGO2e-rebuilt](https://github.com/TR4-io/ALGO2e-rebuilt), source commit `faafa32`. It seeks net trading profit from passive executions at several distances around an estimated fair price. It trades **RY only**; CNR and AC remain included in account reconciliation and shared risk checks.
+RY-only market making for the RIT Client REST API. This version rebuilds the execution loop around bounded cycles, independent replenishment and confirmed order accounting. The 25,000-share stock/gross/net ceilings and the weighted ladder remain. It is a simulation strategy, not a proven profit-maximizing calibration.
 
-This is a new strategy, not a demonstrated profit-maximizing calibration. The competitive screenshots motivated testing an excursion ladder; historical candle extremes are not executable quotes and cannot establish fill probability or expected profit. The supplied one-pager's “Building it” section was excluded. This implementation retains the rebuilt repository's **RIT Client REST connection**, not DMA.
+## Run the complete updated folder
 
-## Start on the RIT computer
-
-Python 3.10+; enable API orders in RIT, load ALGO2e, start flat with no open orders, and use this bot as the account's only writer. Do not run the rebuilt bot alongside it. Restart this process for every round.
+Python 3.10+. Enable API orders in RIT, load ALGO2e, start flat with no open orders, and use one bot on the account.
 
 ```sh
 python -m pip install -r requirements.txt
@@ -14,100 +12,83 @@ python strategy.py --check
 python strategy.py
 ```
 
-`--check` performs read-only checks; it never sends or cancels orders. The last command trades in the connected simulation. In Spyder, open this repository's `strategy.py`, set its working directory to this folder, and run it. Put `--check` in the run configuration for a read-only check.
+`--check` reads only. The last command sends orders to the connected simulation. Defaults are `http://localhost:9999/v1` and API key `Rotman`; override locally with `RIT_BASE_URL` and `RIT_API_KEY`.
 
-Defaults: `http://localhost:9999/v1`, API key `Rotman`. Set `RIT_BASE_URL` and `RIT_API_KEY` in your local environment if needed. Never commit credentials. The default concurrent client uses a 60 requests/second global budget with four I/O workers, shared HTTP 429 backoff, and no replay of uncertain submissions. These are configurable client settings, not a verified server allowance.
+**Spyder:** replace the whole repository folder, restart the Python kernel once, then run this folder's `strategy.py`. Script startup refreshes the complete local dependency group before creating the bot, including when invoked with `%runfile`. It also prints the code folder. The expected banner is **`RY ladder continuous-v2: fresh runtime`**. Copying only `strategy.py` can leave incompatible files behind. The heartbeat tolerates missing diagnostics and reports a clear message instead of dying.
 
-## Concurrent execution
+## How placement now works
 
-The default runner uses `fast_engine.py` with `concurrent_client.py`. It is a low-latency REST execution engine for this simulator, not a colocated exchange HFT system. The ladder and risk limits stay the same.
+The default runner uses `runtime.py` and `concurrent_client.py`. `engine.py` supplies shared accounting and market helpers; its old cycle is not called. `fast_engine.py` is retained only for historical regression tests. `--serial` runs the **same new runtime** with one worker.
 
-- Fetch case, open orders, positions/P&L and the RY book concurrently. Snapshots are not atomic; position discrepancies still trigger reconciliation, and old books cannot authorize orders.
-- Dispatch up to four HTTP requests concurrently through separate keep-alive sessions. A complete ladder can be dispatched as one client-side batch, with every order's worst-case exposure reserved before the first submission. There is no claimed server batch-order endpoint.
-- Send selected cancellations together, then confirm their terminal states before replacing. A slow cancellation does not postpone dispatch of the other selected cancellations. Unknown or unconfirmed orders remain unsafe to replace.
-- Process every batch response on the main thread, including successful siblings of a failed order. No worker mutates the ledger. An uncertain write stops new exposure; it is never automatically replayed.
-- Enforce book-age and case-cutoff deadlines immediately before actual dispatch, including requests delayed by the rate budget. Unsent expired requests are discarded. New order batches stop dispatching when a graceful stop is requested.
-- Target a 20 ms minimum cycle period, subtracting time already spent working. This is not a promised 50 Hz loop: request limits, server latency, reconciliation and logging determine actual speed. There is no extra 100 ms sleep after every cycle.
-- Default budget: 60 total requests per rolling second, with a small four-request burst and smoothing between bursts. Every read, submit and cancel consumes budget. A 429 shares its cooldown across workers and reduces the rate by 20% once per cooldown, rather than once per rejected sibling request. After ten seconds without another rate-limit response, successful requests allow recovery by one request/second every ten seconds, capped at the configured rate. Adjust `request_cap` and `io_workers` in JSON only for the actual environment.
-- Every five seconds, log cycle time, rolling request p50/p95 and rate-queue p95; inspect them with `analyze_run.py`. Book/timing logs buffer briefly; execution and risk events still flush immediately.
+1. Fetch case, open orders and positions concurrently. Confirm cumulative fills. When known orders disappear, fetch the two terminal-history lists once for the entire group; at most four detail requests cover truncated history. There are no repeated per-order sleep/poll loops inside the cycle.
+2. Fetch the RY book **after reconciliation**. Freshness starts at actual HTTP dispatch, excluding time spent waiting for request capacity. A genuinely slow response still cannot authorize a stale quote.
+3. Recompute the ladder and request up to eight necessary cancellations. Acknowledgements do not release quantity or slots. Confirm cancellations/fills in subsequent normal cycles.
+4. Replenish up to eight eligible child slots, inner levels first and alternating sides. A pending cancellation keeps its own slot and risk reservation; it does not impose a global stop on unrelated slots. All independent combinations of outstanding fills are reserved before dispatch.
+5. Pace the next cycle to leave capacity for writes. At the default 60 total requests/second and eight-order submission batch, the minimum target cycle interval is 0.20 seconds, including work already done. Extra I/O, rate limits or server latency can make it longer.
 
-The official [RIT Client API specification](https://rit.306w.ca/RIT-REST-API/1.0.3/swagger.yaml) documents global/security-specific rate limits and `429`/`Retry-After`, but does not give a universally valid requests-per-second figure. The supplied DMA rate observation is not assumed to be a Client API guarantee.
+Four independent keep-alive sessions provide bounded concurrent I/O. Workers never mutate the ledger. New order submissions have freshness/end-of-case deadlines checked immediately before dispatch. Successful siblings are accounted for even when another request fails. An uncertain **order submission** stops new orders and is never replayed. An uncertain **cancellation** stays pending for confirmation; it does not permanently disable submissions by itself.
 
-```sh
-python strategy.py --serial       # original sequential execution path for comparison
-python benchmark_latency.py       # offline artificial-latency comparison, no RIT calls
-```
+HTTP 429 cooldown is shared, with one 20% cap reduction per cooldown and gradual recovery after successful traffic without further rate limits. No server capacity is assumed: instructors can control API submission speed ([RIT overview](https://rotman.utoronto.ca/faculty-and-research/education-labs/bmo-financial-group-finance-research-and-trading-lab/rit-market-simulator/overview--features/)).
 
-Simultaneous submissions can fill before the next inventory-management decision. Aggregate reservations enforce the hard exposure budget; inventory-triggered throttling is disabled by default. Keep this process as the account's only writer.
+## Ladder and quantity
 
-## Ladder
-
-| Level | Distance below/above adjusted fair price | Shares on each side when flat |
+| Distance on each side of adjusted fair | Total shares per side at this level | 500-share children per side |
 |---|---:|---:|
-| 1 | 2 cents | 5,000 |
-| 2 | 4 cents | 4,000 |
-| 3 | 8 cents | 2,500 |
-| 4 | 15 cents | 1,000 |
+| 2 cents | 5,000 | 10 |
+| 4 cents | 4,000 | 8 |
+| 8 cents | 2,500 | 5 |
+| 15 cents | 1,000 | 2 |
 
-Distances are **per side**. At a $100 adjusted center and a narrow book, bids start at 99.98 / 99.96 / 99.92 / 99.85 and asks at 100.02 / 100.04 / 100.08 / 100.15. Each level is split into 500-share child orders: 10 / 8 / 5 / 2 orders per side at the four levels, for up to **50 open orders** in total once staged. The total quantity at each price is unchanged. Initial reservations total 12,500 shares per side: 25,000 outstanding across both sides, with independent fills producing inventory between -12,500 and +12,500 from flat. The 25,000-share inventory ceiling remains unchanged. Smaller outer allocations leave room for repeated inner fills and replenishment. Live capacity can reduce orders. Prices stay passive against the external book; overlapping price levels are coalesced before their quantity is split into child orders.
+Up to **50 resting orders**, totaling **12,500 shares per side** from flat, are staged over several cycles. These are per-side distances: a symmetric 2-cent bid/ask pair is four cents wide. Splitting orders does not increase aggregate quantity, improve queue priority or create counterparties.
 
-The center uses a depth/microprice and momentum estimate, not the last trade. Inventory shifts the center by up to 3 cents toward flattening, without reducing order quantities merely because inventory increased. Volatility and observed adverse post-fill movement can widen inner levels up to the outer offset. Book constraints, inventory skew and tick rounding can place quotes farther than 15 cents from the raw midpoint.
+Fully filled children replenish independently; partial children retain their remaining quantity and queue position. Child IDs within each level remain stable even as available capacity changes. Prices preserve a fee-adjusted minimum edge and stay passive against the external book. Inventory skew, volatility, adverse-fill penalties and duplicate-price coalescing can change prices or reduce the number of eligible slots. The nearest quote is moved to the edge floor rather than dropped solely because inventory skew moved it too close to fair.
 
-RY maker fee: $0.002/share; taker rebate: $0.0014/share, following the case settings inherited from the rebuild. A completed passive buy/sell cycle earns its actual price difference minus $0.004/share. Repricing and unmatched inventory mean the initial displayed width is not guaranteed profit. The bot has no speculative taker leg; marketable limit orders are reserved for liquidation.
+RY maker fee is $0.002/share and taker rebate is $0.0014/share under the supplied case settings. A completed passive buy/sell cycle subtracts $0.004/share in maker fees from its actual price difference. The screenshots motivated the strategy; candle highs/lows do not establish executable fills.
 
-## Low-fill fallback after tick 50
+From tick 50 onward, fewer than 1,000 confirmed RY shares over the trailing 20 ticks triggers a one-time switch to **2/3/5/8-cent offsets** with unchanged allocations. The 20-tick interval is a measurement window, not a delay between submissions. Old children transition through confirmed cancellations at their own slots; independent empty slots remain eligible.
 
-Starting at simulation tick 50, check confirmed RY fill volume over the trailing 20 ticks. If fewer than 1,000 shares filled (buys plus sells), switch once to **±2 / ±3 / ±5 / ±8 cents** for the rest of that run. Sizes remain 5,000 / 4,000 / 2,500 / 1,000 shares per side. Monitor throughout the remaining entry period, so a later drought also triggers the fallback. A late-started process first observes a complete 20-tick window. Exactly 1,000 shares meets the threshold and does not trigger.
+## Limits and exits
 
-Cancel and confirm all existing RY quotes before posting the new ladder; cancellation failures keep the old shares reserved. Hard position limits, trend pauses, fee margin, passive-price checks and volatility widening still apply, so the displayed distances can differ from base offsets. The switch is printed and logged as `ladder_tightened`. Configure `tight_offsets`, `tighten_after`, `fill_window`, and `min_window_fills` in JSON. Custom level counts require matching original offsets, tight offsets and sizes.
+- Stock, gross and net budgets are 25,000 shares, clamped to any lower live limits. Each individual order is at most 5,000 shares. Pending cancellations remain fully reserved. At the hard position ceiling, additional inventory-increasing orders must wait for capacity to be freed.
+- No default wind-down at ticks 275/280 and no default 15,000-share inventory brake, age-based exit or inventory-based quantity reduction. `scheduled_closeout` and `inventory_throttle` remain optional. Price skew still reflects inventory.
+- A six-cent midpoint move over two seconds temporarily blocks the adverse inventory-adding side for three seconds. Fee and stale-data checks remain active.
+- A $500 run loss reduces new exposure; a $1,500 loss or $900 drawdown after a $500 profit peak triggers an explicit `RISK STOP` and liquidation. These are trigger thresholds, not guaranteed loss caps.
+- Ctrl+C once requests liquidation; twice exits immediately with best-effort cleanup. Case end stops new orders and cancels outstanding orders. Without scheduled liquidation, residual inventory can remain at close.
+- A reset prevents cancellation of old IDs in a new round. Persistently unresolved order/position accounting stops new exposure; fills are never inferred from a missing order or cancellation acknowledgement.
 
-## Profit and inventory management
+The account must have one writer. Restarting the script to reset a loss stop or running another copy concurrently is not a substitute for resolving the reported state.
 
-- Continue making after the 100,000-share qualification minimum and 110,000-share reporting target. Do not shrink size just because the target is reached, or bypass fee/risk checks to manufacture volume. The explicit low-fill fallback above can tighten base offsets. Qualification is not guaranteed.
-- Keep full configured clip sizes as inventory grows, subject to remaining hard-limit capacity. Opposite-side orders can reverse inventory, with every independent combination of outstanding fills reserved against the limits.
-- Stock, gross and net budgets are **25,000 shares**, clamped to the actual live limits with no automatic 10% haircut. Initial four-level ladders post at most 12,500 shares per side when flat. At +15,000 shares, for example, another 10,000 buys can be reserved while up to 12,500 sells remain possible. At +25,000, additional buys are blocked by the hard limit; sells remain possible.
-- `inventory_throttle=false` disables the old 15,000-share brake, inventory-proportional size reductions, eight-second inventory-age exits and the rule that the opposite ladder could only flatten rather than reverse. Inventory-aware price skew and all hard risk reservations remain. Set this flag to `true` only to restore those optional controls.
-- A six-cent midpoint move within the rolling two-second window pauses the adverse inventory-adding side for three seconds. Reducing inventory remains allowed. These are starting hypotheses, not fitted parameters.
-- Preserve unchanged quotes and partial-order queue position. Recenter a level after a three-cent target change and at least 0.8 seconds of order age; cancel unsafe/crossing orders immediately. After any cancellation, recompute on the next cycle before submitting replacements.
-- At a $500 run loss, halve new exposure and prioritize reducing inventory. At a $1,500 run loss, or a $900 drawdown after reaching $500 profit, switch to liquidation. These are decision thresholds, not guaranteed loss caps.
-- `scheduled_closeout=false` keeps normal quoting throughout the active case, including after ticks 275 and 280. The server ending the case or tick 300 stops new orders and cancels outstanding orders; there is **no scheduled pre-close liquidation**, so residual inventory at case close is expected to be possible. The bot reports it for inspection. Set this flag to `true` to restore passive reduction at 275 and liquidation at 280. Loss-stop or manual-stop liquidation still uses marketable limits capped at 10 cents from the current best, rising to 30 cents in the final eight seconds; fresh quotes and sufficient depth are required.
-- Ctrl+C once requests liquidation; twice exits with best-effort cancellation. Inspect remaining RIT positions after any abnormal stop. A reset prevents old order IDs from being cancelled in a new round.
+## Read the live output
 
-Risk reserves every outstanding share independently. Opposite-side orders are not netted against each other. Cancellation and temporarily missing order histories receive bounded confirmation retries. An acknowledgement or a missing order is never treated as proof of a fill/cancellation. Unknown accepted writes stop the bot and trigger best-effort account cleanup, rather than being resubmitted.
+`LIVE` lines appear every wall-clock second after completed cycles, even if simulation ticks do not advance. They show actual accepted orders per second (`sent/s`), confirmed filled shares per second, open-order count, position, cycle duration and the latest reason. A separate five-second heartbeat reports the current operation during slow I/O.
 
-Sizing is concentrated at the inner levels. Full fills free their individual ladder slots for replacement on the next eligible cycle, without requiring an opposite-side fill. Each filled child can replenish independently while its siblings remain in the queue. Partial child orders keep their remaining quantity and queue position; they are not cancelled merely to top up. Cancellation races require confirmation and a fresh decision before replacements. At the hard inventory ceiling, only orders that fit the remaining capacity can be submitted.
+| Reason | Meaning |
+|---|---|
+| `quotes_resting` | Desired quotes are present; no replacement is needed. Zero new submissions is normal here. |
+| `submitted` | At least one submission batch completed; it does not imply a fill. |
+| `queued_quotes_expired` / `decision_expired` | The decision became stale before dispatch. Inspect cycle time and effective request cap. |
+| `reconciliation_pending` | Order/position snapshots disagree; the next cycle retries without guessing fills. |
+| `awaiting_cancel_confirmation` | Pending cancellations still own their slots. |
+| `capacity_or_self_cross` | Remaining share capacity or an existing opposite quote blocks the proposed orders. |
+| `stale_or_invalid_book` / `wide_spread` | Market data cannot authorize these quotes. |
+| `case_inactive` | The server reports an inactive case, or the configured round end was reached. |
+| `exit_cancel_pending` / `exit_waiting_for_depth` | The bot is in an explicit liquidation phase. |
 
-When inventory skew would put the near quote inside the fee-adjusted minimum edge, that quote is moved back to the edge floor instead of being dropped, preserving the closest eligible level. Fees, passive pricing, trend/data checks and loss controls remain enforced. These settings aim for more accessible fills; continuous fills and higher profits are not guaranteed.
+`gross=0` or `RY=0` means no held inventory, not a zero configured limit. Resting orders can exist while the account is flat. A market maker manages quotes continuously; it cannot guarantee a transaction every second.
 
-## Configuration and evidence
+## Configuration and verification
 
 ```sh
 python strategy.py --config config.example.json
+python strategy.py --serial
 python analyze_run.py logs/run-YOUR-RUN.jsonl
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -q
 python stress_check.py
+python benchmark_execution.py
 ```
 
-The example includes all defaults; JSON can override only selected fields. `offsets` and `sizes` must have matching lengths. The ladder's total per-side size cannot exceed the stock budget. Keep size fixed when comparing quote offsets so profitability changes can be interpreted.
+`child_order_size` defaults to 500; 5,000 restores one child per level. `max_submit_batch` and `max_cancel_batch` default to eight. Child plans are limited to 100 orders across both sides. `request_cap` defaults to 60 and `io_workers` to four. `reconcile_timeout` defaults to five elapsed seconds, `cancel_retry_seconds` to one, and `telemetry_seconds` to one.
 
-Logs record external depth (up to 30 levels each side), signals, submissions, confirmed fills, ladder level, cancellation reason, sampled P&L/inventory, and final account P&L change (which can include unrealized P&L on residual inventory). The analyzer reports fill volume by side/level, sampled drawdown/inventory and post-detection price drift. A level `-1` is a near-market inventory exit. Volume is buys plus sells, not completed matched cycles. Fill intent is not proof of maker/taker classification; execution prices are recorded only if valid cumulative VWAP is available. Level-specific realized P&L is not fabricated from order limit prices. The official RIT result remains authoritative.
+The benchmark uses the real paced worker transport with an in-memory exchange and artificial latency; it never contacts RIT. Fill events are injected to test replenishment. Stress tests validate mechanics and accounting, not profitability. See [REVIEW.md](REVIEW.md) and [VALIDATION.md](VALIDATION.md) for review findings and measured results.
 
-Tests and `stress_check.py` run entirely offline. The stress runner exercises the concurrent engine with a deterministic exchange adapter; separate tests verify real worker overlap and request pacing. Synthetic flow explicitly consumes order quantity; it does not assume both sides fill because a candle crossed their prices. Its competing depth and order arrivals are stylized and do not estimate competition P&L or qualification probability. See `VALIDATION.md` for tested behaviors and remaining limits.
-
-## Diagnosing quiet practice runs
-
-The console prints a wall-clock heartbeat every five seconds, independently of simulation-tick progress. A heartbeat stuck at `reading/reconciling/quoting` with increasing elapsed time indicates a slow cycle; a frozen tick can also mean the simulation is paused. The startup line says `execution diagnostics enabled` and prints the run-log path.
-
-Status lines separate actual RY inventory, actual gross/net positions and their ceilings, and remaining open buy/sell quantities. For example, `gross=0/25,000 net=0/25,000 open=50 buy=12,500 sell=12,500` means the bot is flat with a resting two-sided ladder. The 25,000-share setting is a ceiling, not a target holding. No fills despite resting orders can reflect wide prices or queue position; fast submission cannot guarantee executions. The 20-tick fill window is an observation window, not a wait between batches.
-
-Expired prefetched books are refreshed once after reconciliation; a fresh request that itself takes too long still cannot authorize a stale quote. `RISK STOP` identifies a hard-loss or profit-drawdown exit, and the log analyzer reports these along with stale/invalid-book blocks and refreshes. Loss thresholds are unchanged. Do not use repeated restarts to reset an intentional loss stop.
-
-For a quiet run, retain the console output and analyze its JSONL log. A `STOPPED` message or `RISK STOP` identifies an exit; heartbeat and execution timing distinguish a running-but-delayed loop. These diagnostics do not automatically resume uncertain writes or guess fills on missing orders.
-
-## More resting orders without increasing aggregate exposure
-
-Default `child_order_size=500` splits the four price-level allocations into 25 orders on each side, up from four per side. `sizes` now describes total shares at each price level. `max_submit_batch=8` stages at most eight new orders per cycle, nearest levels first and alternating sides. In an unchanged market with no fills or restrictions, seven eligible cycles can establish all 50 orders. Deadline/rate/capacity checks can spread this over more cycles or reduce the count. The request cap remains 60 total requests/second; splitting orders does not create additional liquidity or improve queue priority.
-
-Set `child_order_size=5000` to restore one order per level. Child size accepts 250–5,000 shares, with at most 100 planned children across both sides; batch size accepts 1–16. Larger counts consume more API capacity on submission, reconciliation and cancellation, so unlimited fan-out is intentionally unavailable. The serial path also obeys the per-cycle submission cap. Exit orders remain unsplit for prompt inventory reduction.
-
-Heartbeats now include `last_decision`, its age, last-observed open-order count, pending buy/sell shares and position. `queued_quotes_expired` or `decision_expired` means no stale decision was sent; `stale_or_invalid_book` identifies unavailable market data; `case_inactive` means the server is not in an active round; `confirming_cancellations` indicates outstanding cancellation confirmation; `resting_or_capacity_blocked` must be read alongside open quantities and position. `submitted` reports the latest completed submission batch, not a fill. These are snapshots from the bot, not fresh independent exchange reads. If heartbeats continue but RIT has no orders, retain the heartbeat and JSONL log to identify the actual blocking condition.
+The strategy originated from [ALGO2e-rebuilt](https://github.com/TR4-io/ALGO2e-rebuilt), source commit `faafa32`. The supplied one-pager's “Building it” section was excluded.
