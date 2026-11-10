@@ -7,13 +7,16 @@ import sys
 import time
 
 from config import Config
-from engine import Bot, Recorder
-from execution import Client, ApiError, HttpError, UnknownWrite, RateLimited
+from engine import Bot as SerialBot, Recorder
+from fast_engine import Bot
+from concurrent_client import ConcurrentClient as Client
+from execution import Client as SerialClient, ApiError, HttpError, UnknownWrite, RateLimited
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
+    parser.add_argument('--serial', action='store_true', help='Use the original sequential execution path')
     parser.add_argument('--config', help='JSON overrides of Config defaults')
     parser.add_argument('--minimum-volume', type=int, help='Override per-run requirement only after instructor confirmation')
     args = parser.parse_args()
@@ -22,9 +25,9 @@ def main():
     if args.minimum_volume is not None:
         cfg = replace(cfg, minimum_volume=args.minimum_volume)
     cfg.validate()
-    client = Client()
+    client = SerialClient() if args.serial else Client(cfg.request_cap, cfg.io_workers)
     stream = None
-    bot = Bot(client, cfg)
+    bot = (SerialBot if args.serial else Bot)(client, cfg)
     started = False
     previous = None
     try:
@@ -45,6 +48,7 @@ def main():
         previous = signal.signal(signal.SIGINT, stop)
         failures = 0
         while True:
+            cycle_started = time.monotonic()
             try:
                 if not bot.step():
                     break
@@ -65,7 +69,7 @@ def main():
                 # Remove stale exposure before a retry when the connection allows it.
                 bot.cancel_all()
                 time.sleep(min(1, .2*failures))
-            time.sleep(cfg.poll_seconds)
+            time.sleep(max(0, cfg.poll_seconds-(time.monotonic()-cycle_started)))
         return 0
     except (ApiError, KeyError, ValueError, TypeError) as exc:
         print(f'STOPPED: {exc}', file=sys.stderr)
@@ -80,7 +84,7 @@ def main():
             signal.signal(signal.SIGINT, previous)
         if stream:
             stream.close()
-        client.session.close()
+        client.close()
 
 
 if __name__ == '__main__':

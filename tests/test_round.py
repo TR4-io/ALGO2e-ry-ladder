@@ -41,9 +41,22 @@ class LadderExchange(Exchange):
         return super().call(method,path,**params)
 
 
-def exercise(seed,regime):
+def exercise(seed,regime,fast=False):
     x=LadderExchange(seed,regime)
-    b=Bot(x,clock=lambda:x.now)
+    if fast:
+        from concurrent_client import Batch
+        from fast_engine import Bot as FastBot
+        def batch(calls,deadline=None,guard=None):
+            results=[]
+            for method,path,params in calls:
+                try: results.append(x.call(method,path,**params))
+                except Exception as exc: results.append(exc)
+            return Batch(results)
+        x.batch=batch
+        x.metrics=lambda: {}
+        b=FastBot(x,clock=lambda:x.now)
+    else:
+        b=Bot(x,clock=lambda:x.now)
     peak=0.; drawdown=0.; max_inventory=0
     with contextlib.redirect_stdout(io.StringIO()):
         b.start()
@@ -61,7 +74,7 @@ def exercise(seed,regime):
         b.cleanup()
     assert not b.ledger.active() and not any(x.positions.values())
     assert b.ledger.volume==x.volume
-    return dict(regime=regime,seed=seed,pnl=round(x.cash['RY'],2),volume=x.volume,
+    return dict(execution_backend='concurrent' if fast else 'serial',regime=regime,seed=seed,pnl=round(x.cash['RY'],2),volume=x.volume,
                 qualified=x.volume>=b.cfg.minimum_volume,max_inventory=max_inventory,
                 drawdown=round(drawdown,2),hard_stop=b.stopping,
                 residual=sum(map(abs,x.positions.values())),orders=len(x.orders),

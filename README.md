@@ -16,7 +16,29 @@ python strategy.py
 
 `--check` performs read-only checks; it never sends or cancels orders. The last command trades in the connected simulation. In Spyder, open this repository's `strategy.py`, set its working directory to this folder, and run it. Put `--check` in the run configuration for a read-only check.
 
-Defaults: `http://localhost:9999/v1`, API key `Rotman`. Set `RIT_BASE_URL` and `RIT_API_KEY` in your local environment if needed. Never commit credentials. The client paces total requests to at most 40/second, honors HTTP 429 waits, and does not replay uncertain submissions.
+Defaults: `http://localhost:9999/v1`, API key `Rotman`. Set `RIT_BASE_URL` and `RIT_API_KEY` in your local environment if needed. Never commit credentials. The default concurrent client uses a 60 requests/second global budget with four I/O workers, shared HTTP 429 backoff, and no replay of uncertain submissions. These are configurable client settings, not a verified server allowance.
+
+## Concurrent execution
+
+The default runner uses `fast_engine.py` with `concurrent_client.py`. It is a low-latency REST execution engine for this simulator, not a colocated exchange HFT system. The ladder and risk limits stay the same.
+
+- Fetch case, open orders, positions/P&L and the RY book concurrently. Snapshots are not atomic; position discrepancies still trigger reconciliation, and old books cannot authorize orders.
+- Dispatch up to four HTTP requests concurrently through separate keep-alive sessions. A complete ladder can be dispatched as one client-side batch, with every order's worst-case exposure reserved before the first submission. There is no claimed server batch-order endpoint.
+- Send selected cancellations together, then confirm their terminal states before replacing. A slow cancellation does not postpone dispatch of the other selected cancellations. Unknown or unconfirmed orders remain unsafe to replace.
+- Process every batch response on the main thread, including successful siblings of a failed order. No worker mutates the ledger. An uncertain write stops new exposure; it is never automatically replayed.
+- Enforce book-age and case-cutoff deadlines immediately before actual dispatch, including requests delayed by the rate budget. Unsent expired requests are discarded. New order batches stop dispatching when a graceful stop is requested.
+- Target a 20 ms minimum cycle period, subtracting time already spent working. This is not a promised 50 Hz loop: request limits, server latency, reconciliation and logging determine actual speed. There is no extra 100 ms sleep after every cycle.
+- Default budget: 60 total requests per rolling second, with a small four-request burst and smoothing between bursts. Every read, submit and cancel consumes budget. A 429 shares its cooldown across workers and reduces the rate by 20%; it does not increase again automatically during the run. Adjust `request_cap` and `io_workers` in JSON only for the actual environment.
+- Every five seconds, log cycle time, rolling request p50/p95 and rate-queue p95; inspect them with `analyze_run.py`. Book/timing logs buffer briefly; execution and risk events still flush immediately.
+
+The official [RIT Client API specification](https://rit.306w.ca/RIT-REST-API/1.0.3/swagger.yaml) documents global/security-specific rate limits and `429`/`Retry-After`, but does not give a universally valid requests-per-second figure. The supplied DMA rate observation is not assumed to be a Client API guarantee.
+
+```sh
+python strategy.py --serial       # original sequential execution path for comparison
+python benchmark_latency.py       # offline artificial-latency comparison, no RIT calls
+```
+
+Simultaneous submissions can fill before the next inventory-management decision. Aggregate reservations enforce the hard exposure budget; the 3,000-share brake is still not a guaranteed instantaneous ceiling. Keep this process as the account's only writer.
 
 ## Ladder
 
@@ -66,4 +88,4 @@ The example includes all defaults; JSON can override only selected fields. `offs
 
 Logs record external depth (up to 30 levels each side), signals, submissions, confirmed fills, ladder level, cancellation reason, sampled P&L/inventory, and final account P&L change. The analyzer reports fill volume by side/level, sampled drawdown/inventory and post-detection price drift. A level `-1` is a near-market inventory exit. Volume is buys plus sells, not completed matched cycles. Fill intent is not proof of maker/taker classification; execution prices are recorded only if valid cumulative VWAP is available. Level-specific realized P&L is not fabricated from order limit prices. The official RIT result remains authoritative.
 
-Tests and `stress_check.py` run entirely offline. Synthetic flow explicitly consumes order quantity; it does not assume both sides fill because a candle crossed their prices. Its competing depth and order arrivals are stylized and do not estimate competition P&L or qualification probability. See `VALIDATION.md` for tested behaviors and remaining limits.
+Tests and `stress_check.py` run entirely offline. The stress runner exercises the concurrent engine with a deterministic exchange adapter; separate tests verify real worker overlap and request pacing. Synthetic flow explicitly consumes order quantity; it does not assume both sides fill because a candle crossed their prices. Its competing depth and order arrivals are stylized and do not estimate competition P&L or qualification probability. See `VALIDATION.md` for tested behaviors and remaining limits.

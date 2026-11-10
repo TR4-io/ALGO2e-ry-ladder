@@ -29,3 +29,23 @@ Important practical limits:
 ## Tick-50 low-fill fallback
 
 After adding the fallback, `python3 -m unittest discover -s tests -q` passed all 46 tests, including the existing 10 full-round integration scenarios. Eight new tests cover activation at tick 50, a complete observation window for late starts, exact-threshold behavior, cumulative-fill deduplication, excluding non-RY fills, one-time switching, confirmation of old cancellations before tighter replacements (including a failed cancellation), preserved passive/inventory controls, and invalid configuration. The earlier 25-round stress results above describe the initial implementation.
+
+## Concurrent execution upgrade
+
+- All 65 tests pass, including five full rounds through the concurrent engine and the ten existing sequential round scenarios. The new tests cover worker overlap, independent sessions, global pacing/burst limits, shared 429 cooldown, queued expiry, full-batch risk reservation, partial failures, lost write responses, sibling accounting, interrupts during scheduling/response waits, cancellation races, resets and dispatch deadlines for liquidation.
+- All 25 stress rounds using the concurrent engine completed with no residual inventory or open orders. Sampled absolute RY inventory reached at most 4,000 shares; two jump scenarios triggered configured liquidation. The exchange adapter executes deterministically; separate transport tests use actual worker threads.
+- `python3 -m compileall -q .` and `git diff --check` passed.
+- No live RIT trading or live latency benchmarking was performed.
+
+`python3 benchmark_latency.py` runs an offline transport benchmark with artificial response delays and no network calls. Median of three isolated batches, four workers, 60 requests/second concurrent budget, versus the old sequential 40 requests/second transport:
+
+| Artificial response delay | Requests | Sequential | Concurrent |
+|---|---:|---:|---:|
+| 10 ms | 4 | 96.9 ms | 12.5 ms |
+| 10 ms | 8 | 203.2 ms | 81.7 ms |
+| 50 ms | 4 | 214.2 ms | 55.6 ms |
+| 50 ms | 8 | 425.4 ms | 122.2 ms |
+| 100 ms | 4 | 416.9 ms | 105.4 ms |
+| 100 ms | 8 | 828.3 ms | 205.8 ms |
+
+These measurements use a fresh limiter per batch, exclude strategy work and loop sleeps, and demonstrate concurrency only. They are not throughput guarantees: sustained operations share one request budget, the live server may serialize requests, and 429 responses lower the effective client cap. The 20 ms minimum cycle period is not an achieved 50 Hz rate. Use recorded `execution_timing` events to assess actual latency, queue time and cycle duration in practice.

@@ -7,7 +7,7 @@ import json
 def summarize(path):
     totals = defaultdict(int)
     drift = defaultdict(lambda: [0., 0])
-    last_status = end = None
+    last_status = end = latest_execution_timing = None
     errors = []
     fills = []
     levels = {}
@@ -32,6 +32,8 @@ def summarize(path):
                 key = f"{event['ticker']} {event['action']} {event['intent']} {event['horizon']}s"
                 drift[key][0] += event['post_detection_drift']*event['quantity']
                 drift[key][1] += event['quantity']
+            elif kind == 'execution_timing':
+                latest_execution_timing = event
             elif kind == 'status':
                 last_status = event
                 max_inventory = max(max_inventory, abs(event.get('positions', {}).get('RY', 0)))
@@ -48,7 +50,7 @@ def summarize(path):
         slot = levels.get(event.get('order_id'))
         key = f'{slot[0]} level {slot[1]}' if slot else event['intent']
         by_level[key] += event['quantity']
-    return dict(fill_volume_by_level=dict(by_level),
+    return dict(latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
                 sampled_max_ry_inventory=max_inventory, sampled_max_drawdown=max_drawdown,
                 file=str(path), completed=end is not None, final=end, latest_status=last_status,
                 confirmed_fill_volume=dict(totals),

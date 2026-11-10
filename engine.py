@@ -19,11 +19,14 @@ class MissingOrder(ApiError):
 class Recorder:
     def __init__(self, stream=None):
         self.stream = stream
+        self.last_flush = 0
 
     def emit(self, kind, **fields):
         if self.stream:
             self.stream.write(json.dumps(dict(event=kind, wall_time=time.time(), **fields), allow_nan=False)+'\n')
-            self.stream.flush()
+            if kind not in ('book','execution_timing') or time.monotonic()-self.last_flush >= .25:
+                self.stream.flush()
+                self.last_flush = time.monotonic()
 
 
 class Bot:
@@ -194,9 +197,12 @@ class Bot:
         raise ApiError(f'Cancellation of order {o.id} not confirmed after 11 checks; '
                        'no replacement submitted')
 
+    def cancel_many(self, orders, reason):
+        for o in orders:
+            self.cancel(o, reason)
+
     def cancel_all(self):
-        for o in list(self.ledger.active()):
-            self.cancel(o, 'cancel_all')
+        self.cancel_many(list(self.ledger.active()), 'cancel_all')
 
     def submit(self, ticker, action, qty, price, intent, observed):
         # Last-moment gate, shared by maker, taker and liquidation.
@@ -275,8 +281,7 @@ class Bot:
         # No midpoint/ask required to sell, and no bid required to buy back shorts.
         active = self.ledger.active(ticker)
         if active:
-            for o in list(active):
-                self.cancel(o, 'exit_refresh')
+            self.cancel_many(list(active), 'exit_refresh')
             book, observed = self.book(ticker)
         pos = self.ledger.positions[ticker]
         if not pos:
@@ -320,8 +325,7 @@ class Bot:
             return
         snap = self.observe(ticker, book, observed)
         if snap is None or snap.spread > self.cfg.max_spread:
-            for o in list(self.ledger.active(ticker)):
-                self.cancel(o, 'invalid_book')
+            self.cancel_many(list(self.ledger.active(ticker)), 'invalid_book')
             return
         self.check_fill_activity()
         now = self.clock()
@@ -345,7 +349,7 @@ class Bot:
         targets = ladder(snap, pos, self.cfg, age, self.mode, self.cautious, blocked,
                          {a: self.penalty(ticker, a) for a in ('BUY', 'SELL')},
                          offsets=self.cfg.tight_offsets if self.tight_ladder else None)
-        changed = False
+        cancellations = []
         for o in list(self.ledger.active(ticker)):
             slot = self.slots.get(o.id)
             target = targets.get(slot)
@@ -360,13 +364,16 @@ class Bot:
                 cancel |= (abs(o.price-target[0]) >= self.cfg.recenter_move-1e-9 and
                            now-o.born >= self.cfg.reprice_delay)
             if cancel:
-                self.cancel(o, 'ladder_refresh')
-                self.requote_orders.discard(o.id)
-                changed = True
+                cancellations.append(o)
+        if cancellations:
+            self.cancel_many(cancellations, 'ladder_refresh')
         self.requote_orders.intersection_update(o.id for o in self.ledger.active('RY'))
-        if changed:
+        if cancellations:
             # Cancellation can race with fills: make all decisions again next cycle.
             return
+        self.place_targets(ticker, targets, pos, observed, age)
+
+    def place_targets(self, ticker, targets, pos, observed, age):
         sides = ('SELL', 'BUY') if pos > 0 else ('BUY', 'SELL')
         for side in sides:
             for slot, (price, qty) in targets.items():

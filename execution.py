@@ -57,8 +57,14 @@ class Client:
         if wait > 0:
             time.sleep(wait)
         self.next_request = time.monotonic()+0.025
+        return self._request(self.session, method, path, params)
+
+    def close(self):
+        self.session.close()
+
+    def _request(self, session, method, path, params):
         try:
-            r = self.session.request(method, BASE_URL.rstrip('/') + '/' + path,
+            r = session.request(method, BASE_URL.rstrip('/') + '/' + path,
                                      params=params, timeout=2, allow_redirects=False)
         except requests.RequestException as exc:
             kind = UnknownWrite if method != 'GET' else ApiError

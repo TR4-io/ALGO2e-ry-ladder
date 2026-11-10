@@ -30,7 +30,9 @@ class Config:
     trend_pause: float = 3
     max_widening: float = .04
     min_edge: float = .01
-    poll_seconds: float = .10
+    poll_seconds: float = .02
+    request_cap: int = 60
+    io_workers: int = 4
     max_book_age: float = .60
     max_spread: float = .60
     soft_loss: float = 500
@@ -81,6 +83,10 @@ class Config:
             raise ValueError('Ladder exceeds stock budget or invalid exit clip')
         if not 0 < self.last_entry < self.flatten_at < self.end_tick <= 300:
             raise ValueError('Invalid closeout times')
+        if type(self.request_cap) is not int or not 1 <= self.request_cap <= 500:
+            raise ValueError('request_cap must be an integer from 1 to 500')
+        if type(self.io_workers) is not int or not 1 <= self.io_workers <= 8:
+            raise ValueError('io_workers must be an integer from 1 to 8')
         if not 0 < self.poll_seconds <= self.max_book_age <= 2:
             raise ValueError('Invalid polling settings')
         if not (0 < self.recenter_move and 0 < self.inventory_age and 0 < self.trend_window
