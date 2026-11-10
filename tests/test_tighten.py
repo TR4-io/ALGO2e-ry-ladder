@@ -70,7 +70,7 @@ class TightenTests(unittest.TestCase):
         b.manage('RY');self.assertEqual(len(x.orders),16)
 
     def test_tight_ladder_keeps_inventory_brake_and_passive_pricing(self):
-        cfg=Config();snap=snapshot()
+        cfg=Config(inventory_throttle=True);snap=snapshot()
         targets=ladder(snap,15000,cfg,offsets=cfg.tight_offsets)
         self.assertEqual(targets,{('SELL',-1):(10.02,5000)})
         wide=snapshot(bid=9.8,ask=10.2,mid=10,fair=10)
@@ -78,7 +78,7 @@ class TightenTests(unittest.TestCase):
         self.assertTrue(all(p<=wide.bid if s=='BUY' else p>=wide.ask for (s,i),(p,q) in targets.items()))
 
     def test_bad_settings_rejected(self):
-        for kw in ({'tighten_after':275},{'fill_window':0},{'fill_window':60},
+        for kw in ({'tighten_after':300},{'fill_window':0},{'fill_window':60},
                    {'min_window_fills':True},{'min_window_fills':0},
                    {'tight_offsets':[.01]}, {'tight_offsets':[.04,.06,.10,.15]},
                    {'tight_offsets':[.02,.02,.07,.12]}, {'tight_offsets':[float('nan')]*4}):

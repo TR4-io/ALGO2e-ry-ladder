@@ -24,19 +24,19 @@ class LadderTests(unittest.TestCase):
 
     def test_brake_cancels_adding_side_and_exit_cannot_reverse(self):
         for pos in (15000,-15000):
-            plan=ladder(snapshot(),pos,Config())
+            plan=ladder(snapshot(),pos,Config(inventory_throttle=True))
             side='SELL' if pos>0 else 'BUY'
             self.assertEqual(set(plan),{(side,-1)})
             self.assertLessEqual(plan[(side,-1)][1],abs(pos))
 
     def test_partial_inventory_reducing_ladder_cannot_reverse(self):
-        plan=ladder(snapshot(),700,Config())
+        plan=ladder(snapshot(),700,Config(inventory_throttle=True))
         self.assertLessEqual(sum(q for (s,_),(p,q) in plan.items() if s=='SELL'),700)
         self.assertLess(sum(q for (s,_),(p,q) in plan.items() if s=='BUY'),20000)
 
     def test_age_and_caution_use_near_passive_exit(self):
         for kwargs in ({'age':9},{'cautious':True},{'mode':'REDUCE'}):
-            plan=ladder(snapshot(),1200,Config(),**kwargs)
+            plan=ladder(snapshot(),1200,Config(inventory_throttle=True),**kwargs)
             self.assertEqual(plan[('SELL',-1)],(10.02,1200))
 
     def test_adverse_trend_blocks_adds_but_allows_exit(self):
@@ -49,7 +49,7 @@ class LadderTests(unittest.TestCase):
         self.assertGreater(b[('SELL',0)][0],a[('SELL',0)][0])
 
     def test_volume_target_does_not_halt_profit_opportunities(self):
-        c=Config()
+        c=Config(scheduled_closeout=True)
         self.assertEqual(phase(c,260,200000,False),'MAKE')
         self.assertEqual(phase(c,275,0,False),'REDUCE')
         self.assertEqual(phase(c,280,0,False),'EXIT')
@@ -57,7 +57,7 @@ class LadderTests(unittest.TestCase):
 
     def test_bad_config(self):
         for kw in ({'offsets':[.03,.02]}, {'sizes':[6000]*4}, {'sizes':[True]*4},
-                   {'offsets':[float('nan')]*4}, {'inventory_brake':22500},
+                   {'offsets':[float('nan')]*4}, {'inventory_brake':25000},
                    {'recenter_move':0}, {'stock_budget':19000}):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 replace(Config(),**kw).validate()
@@ -80,7 +80,7 @@ class LadderTests(unittest.TestCase):
 
     def test_brake_cancels_existing_bids_before_new_orders(self):
         from tests.exchange import Exchange
-        x=Exchange(); b=Bot(x,clock=lambda:x.now); b.manage('RY')
+        x=Exchange(); b=Bot(x,Config(inventory_throttle=True),clock=lambda:x.now); b.manage('RY')
         buys=[o for o in x.orders.values() if o['action']=='BUY']
         for o in buys[:3]:
             x.fill(o,o['quantity'],o['price'],True)

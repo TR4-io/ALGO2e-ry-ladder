@@ -95,8 +95,8 @@ class Bot:
             g, n = float(row['gross_limit']), float(row['net_limit'])
             if not math.isfinite(g+n) or min(g, n) <= 0:
                 raise ValueError('Invalid live limits')
-            self.gross_limit = min(self.gross_limit, int(g*.9))
-            self.net_limit = min(self.net_limit, int(n*.9))
+            self.gross_limit = min(self.gross_limit, int(g))
+            self.net_limit = min(self.net_limit, int(n))
         self.start_pnl = self.pnl(rows)
         self.record.emit('start', config=asdict(self.cfg), gross_limit=self.gross_limit, net_limit=self.net_limit, start_pnl=self.start_pnl)
         print(f'Connected. Minimum {self.cfg.minimum_volume:,} shares EACH run; target {self.cfg.target_volume:,}.')
@@ -211,7 +211,7 @@ class Bot:
         if self.case_seen is not None:
             estimated_tick = self.tick + max(0, self.clock()-self.case_seen)
             if estimated_tick >= self.cfg.end_tick or (
-                    intent in ('MAKE', 'TAKE') and estimated_tick >= self.cfg.last_entry):
+                    intent in ('MAKE', 'TAKE') and estimated_tick >= self.cfg.entry_cutoff):
                 return None
         qty = capacity(self.ledger.positions, self.ledger.active(), ticker, action, int(qty),
                        self.gross_limit, self.net_limit, self.cfg.stock_budget)
@@ -420,7 +420,7 @@ class Bot:
         if tick-self.last_report >= 5:
             self.last_report = tick
             needed = max(0, self.cfg.minimum_volume-self.ledger.volume)
-            rate = needed/max(1, self.cfg.last_entry-tick)
+            rate = needed/max(1, self.cfg.entry_cutoff-tick)
             print(f't={tick:.1f} volume={self.ledger.volume:,} need={needed:,} rate={rate:.0f}/s P&L={pnl} mode={self.mode}')
             self.record.emit('status', tick=tick, volume=self.ledger.volume, needed=needed, required_rate=rate,
                              pnl=pnl, positions=dict(self.ledger.positions), mode=self.mode, cautious=self.cautious)

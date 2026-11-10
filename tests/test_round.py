@@ -72,7 +72,8 @@ def exercise(seed,regime,fast=False):
             x.advance()
             assert x.now<=300.25
         b.cleanup()
-    assert not b.ledger.active() and not any(x.positions.values())
+    assert not b.ledger.active()
+    assert x.positions == b.ledger.positions
     assert b.ledger.volume==x.volume
     return dict(execution_backend='concurrent' if fast else 'serial',regime=regime,seed=seed,pnl=round(x.cash['RY'],2),volume=x.volume,
                 qualified=x.volume>=b.cfg.minimum_volume,max_inventory=max_inventory,

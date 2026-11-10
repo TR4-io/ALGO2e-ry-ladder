@@ -127,7 +127,7 @@ class ExecutionTests(unittest.TestCase):
 
     def test_slow_cycle_cannot_add_exposure_after_entry_cutoff(self):
         b = self.bot(3)
-        b.tick, b.case_seen = 274, 1
+        b.tick, b.case_seen = 299, 1
         b.api = Mock()
         b.submit('CNR', 'BUY', 1000, 10, 'MAKE', 3)
         b.api.assert_not_called()

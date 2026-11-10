@@ -13,12 +13,14 @@ class Config:
     min_window_fills: int = 1000
     minimum_volume: int = 100000
     volume_buffer: float = .10
+    scheduled_closeout: bool = False
+    inventory_throttle: bool = False
     last_entry: float = 275
     flatten_at: float = 280
     end_tick: float = 300
-    gross_budget: int = 22500
-    net_budget: int = 22500
-    stock_budget: int = 22500
+    gross_budget: int = 25000
+    net_budget: int = 25000
+    stock_budget: int = 25000
     inventory_brake: int = 15000
     inventory_age: float = 8
     exit_clip: int = 5000
@@ -43,11 +45,19 @@ class Config:
     urgent_slippage: float = .30
 
     @property
+    def entry_cutoff(self):
+        return self.last_entry if self.scheduled_closeout else self.end_tick
+
+    @property
     def target_volume(self):
         return self.minimum_volume + math.ceil(self.minimum_volume*self.volume_buffer)
 
     def validate(self):
         for name, value in asdict(self).items():
+            if name in ('scheduled_closeout', 'inventory_throttle'):
+                if type(value) is not bool:
+                    raise ValueError(f'{name} must be boolean')
+                continue
             if name in ('offsets', 'sizes', 'tight_offsets'):
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
@@ -67,7 +77,7 @@ class Config:
             raise ValueError('Tight offsets must be positive tick distances no wider than original offsets')
         if any(a >= b for a,b in zip(self.tight_offsets, self.tight_offsets[1:])):
             raise ValueError('Tight offsets must increase strictly')
-        if not (0 < self.fill_window <= self.tighten_after < self.last_entry):
+        if not (0 < self.fill_window <= self.tighten_after < self.entry_cutoff):
             raise ValueError('Invalid fill monitoring window or activation tick')
         if type(self.min_window_fills) is not int or self.min_window_fills <= 0:
             raise ValueError('min_window_fills must be a positive integer')
@@ -76,8 +86,8 @@ class Config:
         for name in ('minimum_volume','gross_budget','net_budget','stock_budget','inventory_brake','exit_clip'):
             if type(getattr(self,name)) is not int:
                 raise ValueError(f'{name} must be an integer')
-        if not (0 < self.inventory_brake < self.stock_budget <= 22500 and
-                self.stock_budget <= self.gross_budget <= 22500 and 0 < self.net_budget <= 22500):
+        if not (0 < self.inventory_brake < self.stock_budget <= 25000 and
+                self.stock_budget <= self.gross_budget <= 25000 and 0 < self.net_budget <= 25000):
             raise ValueError('Invalid position budgets')
         if sum(self.sizes) > self.stock_budget or not 0 < self.exit_clip <= 5000:
             raise ValueError('Ladder exceeds stock budget or invalid exit clip')

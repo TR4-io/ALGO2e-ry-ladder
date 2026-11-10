@@ -25,10 +25,10 @@ class MaxSizingTests(unittest.TestCase):
                 return super().call(method,path,**params)
         x=LowerLimits();b=Bot(x,clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):b.start();b.step()
-        self.assertEqual((b.gross_limit,b.net_limit),(9000,7200))
+        self.assertEqual((b.gross_limit,b.net_limit),(10000,8000))
         low,high,gross,net=risk_bounds(b.ledger.positions,b.ledger.active())
-        self.assertLessEqual(gross,9000);self.assertLessEqual(net,7200)
-        self.assertEqual((low['RY'],high['RY']),(-7200,7200))
+        self.assertLessEqual(gross,10000);self.assertLessEqual(net,8000)
+        self.assertEqual((low['RY'],high['RY']),(-8000,8000))
         self.assertTrue(all(o.quantity<=5000 for o in b.ledger.active()))
 
     def test_full_sweep_then_adverse_move_liquidates_entire_position(self):
@@ -42,7 +42,7 @@ class MaxSizingTests(unittest.TestCase):
             for _ in range(30):
                 running=b.step()
                 self.assertTrue(b.stopping)
-                self.assertLessEqual(abs(x.positions['RY']),22500)
+                self.assertLessEqual(abs(x.positions['RY']),25000)
                 if not running:break
                 x.now+=.25
             self.assertFalse(running)

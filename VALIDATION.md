@@ -57,3 +57,11 @@ Defaults now use 5,000 shares at each of four levels per side (20,000 per side w
 All 68 tests passed. Additional sizing tests enumerate all 256 combinations of full fills across the eight initial orders, verify that lower live gross/net limits clip the concurrent batch, and force a 20,000-share one-sided sweep followed by an adverse move to test complete liquidation. Existing independent-fill, cancellation, concurrency and fallback regressions remain in the suite.
 
 All 25 concurrent-engine synthetic stress rounds ended with zero residual inventory. Maximum sampled absolute inventory was 19,065 shares; 3 rounds triggered configured loss/drawdown stops. The separate one-sided-sweep test explicitly reaches 20,000 shares. Synthetic behavior is not a live liquidity or profitability guarantee.
+
+## Continuous quoting with 25,000-share budgets
+
+Stock, gross and net defaults are now 25,000 shares, clamped to any lower live exchange limit without the former 10% haircut. Scheduled closeout and inventory throttling default to false. The four 5,000-share levels remain active through the active case; hard capacity can still clip or block orders. Inventory price skew, loss stops, trend and data-quality controls remain enabled. These defaults supersede the earlier sizing and closeout settings above.
+
+All 75 tests passed. New tests cover continued full-size quoting at ticks 275, 280 and 299, aged inventory, both signs of 15,000-share inventory, exact 25,000-share capacity, optional restoration of legacy controls, cancellation at case end and accurately reported residual inventory. Existing tests still cover concurrent risk reservations and loss-stop liquidation.
+
+All 25 concurrent synthetic stress rounds completed. Maximum sampled absolute inventory was 25,000 shares. Three loss-stop rounds finished flat; the other 22 rounds finished with residual inventory, as expected without scheduled liquidation. These synthetic results validate mechanics, not competitive profitability. No live RIT trades were run.

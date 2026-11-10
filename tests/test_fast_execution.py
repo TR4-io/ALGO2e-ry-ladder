@@ -140,7 +140,7 @@ class FastTests(unittest.TestCase):
                         x.advance()
                         self.assertLessEqual(x.now,300.25)
                     b.cleanup()
-                self.assertFalse(b.ledger.active());self.assertFalse(any(x.positions.values()))
+                self.assertFalse(b.ledger.active());self.assertEqual(b.ledger.positions,x.positions)
 
 class FakeClock:
     def __init__(self):self.now=0

@@ -20,36 +20,44 @@ from execution import MAKER_REBATE
 
 def phase(cfg, tick, volume, stopping):
     # Profit opportunities continue after qualification; volume is not an edge.
-    if stopping or tick >= cfg.flatten_at:
+    if stopping:
         return 'EXIT'
-    return 'REDUCE' if tick >= cfg.last_entry else 'MAKE'
+    if cfg.scheduled_closeout:
+        if tick >= cfg.flatten_at:
+            return 'EXIT'
+        if tick >= cfg.last_entry:
+            return 'REDUCE'
+    return 'MAKE'
 
 
 def ladder(snap, pos, cfg, age=0, mode='MAKE', cautious=False, blocked=(), penalties=None, offsets=None):
     """Pure target plan. Capacity must still reserve outstanding orders at submission."""
     penalties = penalties or {}
     offsets = cfg.offsets if offsets is None else offsets
-    center = snap.fair - cfg.skew*max(-1, min(1, pos/cfg.inventory_brake))
+    skew_budget = cfg.inventory_brake if cfg.inventory_throttle else cfg.stock_budget
+    center = snap.fair - cfg.skew*max(-1, min(1, pos/skew_budget))
     widening = min(cfg.max_widening, snap.sigma*.5)
     targets = {}
     for side, sign in (('BUY', 1), ('SELL', -1)):
         reducing = sign*pos < 0
-        adding_blocked = mode != 'MAKE' or abs(pos) >= cfg.inventory_brake or side in blocked
+        adding_blocked = (mode != 'MAKE' or side in blocked or
+                          cfg.inventory_throttle and abs(pos) >= cfg.inventory_brake)
         if not reducing and adding_blocked:
             continue
         # Old/large inventory gets a nearer passive exit, with no reversal sizing.
-        exit_only = reducing and (age >= cfg.inventory_age or abs(pos) >= cfg.inventory_brake
-                                  or mode != 'MAKE' or cautious or side in blocked)
+        exit_only = reducing and (mode != 'MAKE' or cautious or side in blocked or
+                                  cfg.inventory_throttle and
+                                  (age >= cfg.inventory_age or abs(pos) >= cfg.inventory_brake))
         if exit_only:
             price = snap.bid if side == 'BUY' else snap.ask
             targets[(side, -1)] = (round(price, 2), min(abs(pos), cfg.exit_clip))
             continue
         side_remaining = max(0, cfg.stock_budget-sign*pos)
-        # If inventory exists, the reducing side may flatten but cannot overshoot.
-        if reducing:
+        # Optional inventory throttle prevents a reducing ladder from reversing position.
+        if reducing and cfg.inventory_throttle:
             side_remaining = min(side_remaining, abs(pos))
         scale = .5 if cautious else 1
-        if not reducing:
+        if not reducing and cfg.inventory_throttle:
             scale *= max(.25, 1-abs(pos)/cfg.inventory_brake)
         seen = set()
         for i, (offset, size) in enumerate(zip(offsets, cfg.sizes)):

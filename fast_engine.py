@@ -114,7 +114,7 @@ class Bot(SerialBot):
             raise UnknownWrite('New orders blocked after uncertain batch')
         self.single_deadline = observed+self.cfg.max_book_age
         if self.case_seen is not None:
-            cutoff = self.cfg.last_entry if intent in ('MAKE','TAKE') else self.cfg.end_tick
+            cutoff = self.cfg.entry_cutoff if intent in ('MAKE','TAKE') else self.cfg.end_tick
             self.single_deadline = min(self.single_deadline, self.case_seen+max(0,cutoff-self.tick))
         try:
             return super().submit(ticker, action, qty, price, intent, observed)
@@ -128,7 +128,7 @@ class Bot(SerialBot):
             raise UnknownWrite('New orders blocked after uncertain batch')
         deadline = observed+self.cfg.max_book_age
         if self.case_seen is not None:
-            cutoff = self.cfg.last_entry if self.mode == 'MAKE' else self.cfg.end_tick
+            cutoff = self.cfg.entry_cutoff if self.mode == 'MAKE' else self.cfg.end_tick
             deadline = min(deadline, self.case_seen+max(0,cutoff-self.tick))
         if self.clock() >= deadline or self.stopping:
             return
