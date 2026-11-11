@@ -24,7 +24,9 @@ class ContinuousTradingTests(unittest.TestCase):
             plan=ladder(snap,pos,cfg,age=200)
             adding='BUY' if pos>0 else 'SELL'; reducing='SELL' if pos>0 else 'BUY'
             self.assertEqual(sum(q for (s,i),(p,q) in plan.items() if s==adding),10000)
-            self.assertEqual(sum(q for (s,i),(p,q) in plan.items() if s==reducing),12500)
+            # Fee-floor price collisions may remove duplicate levels, but age must not throttle.
+            self.assertEqual(plan, ladder(snap,pos,cfg,age=0))
+            self.assertEqual(plan[(reducing,0)][1],cfg.sizes[0])
             self.assertTrue(all(q <= cfg.sizes[i] for (side,i),(p,q) in plan.items()))
             self.assertFalse(any(i==-1 for s,i in plan))
             orders=[Order(i,'RY',s,q,p,0) for i,((s,_),(p,q)) in enumerate(plan.items())]
@@ -44,7 +46,7 @@ class ContinuousTradingTests(unittest.TestCase):
         self.assertTrue(all(q == Config().sizes[i] for (side,i),(p,q) in plan.items()))
 
     def test_active_299_places_orders_300_cancels_without_new_entries(self):
-        x=BatchExchange();x.now=299;b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
+        x=BatchExchange();x.now=299;b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start();self.assertTrue(b.step())
             self.assertEqual(len(x.orders),8)
@@ -53,7 +55,7 @@ class ContinuousTradingTests(unittest.TestCase):
         self.assertFalse(b.ledger.active())
 
     def test_case_close_can_leave_inventory_and_does_not_submit_liquidation(self):
-        x=BatchExchange();x.now=299;b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
+        x=BatchExchange();x.now=299;b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start();b.step()
             buy=next(o for o in x.orders.values() if o['action']=='BUY')

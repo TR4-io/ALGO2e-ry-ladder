@@ -13,7 +13,7 @@ from execution import (ApiError, HttpError, UnknownWrite, Order, TICKERS,
 from concurrent_client import ExpiredQuote
 from policy import ladder, split_targets, submission_targets, phase, sweep
 
-BUILD = 'continuous-v3'
+BUILD = 'continuous-v4'
 
 
 class Bot(AccountingBot):
@@ -21,6 +21,7 @@ class Bot(AccountingBot):
         super().__init__(client, cfg, recorder, clock)
         self.transport = client
         self.pending_cancel = {}
+        self.cancel_causes = {}
         self.unresolved_since = None
         self.write_uncertain = False
         self.own_ids = set()
@@ -95,7 +96,9 @@ class Bot(AccountingBot):
         if o.status != 'OPEN' or o.remaining == 0:
             pending = self.pending_cancel.pop(oid, None)
             if pending:
-                self.record.emit('cancel', tick=self.tick, order_id=oid, reason=pending[1])
+                self.record.emit('cancel', tick=self.tick, order_id=oid, reason=pending[1],
+                                 resting_seconds=self.clock()-o.born,
+                                 cancelled_remaining=o.quantity-o.filled)
             self.requote_orders.discard(oid)
 
     def reconcile_orders(self, opened):
@@ -305,16 +308,27 @@ class Bot(AccountingBot):
         result = []
         for o in self.working('RY'):
             target = targets.get(self.slots.get(o.id))
-            stale = (o.id in self.requote_orders or o.id in self.pending_cancel or
-                     target is None or o.remaining > target[1])
+            causes = []
+            if o.id in self.requote_orders:
+                causes.append('ladder_transition')
+            if o.id in self.pending_cancel:
+                causes.append('cancel_retry')
+            if target is None:
+                causes.append('slot_removed')
+            elif o.remaining > target[1]:
+                causes.append('quantity_reduced')
             if target is not None:
                 sign = 1 if o.action == 'BUY' else -1
-                stale |= (sign*self.ledger.positions['RY'] >= 0 and
-                          sign*(snap.fair-o.price)+MAKER_REBATE['RY'] < self.cfg.min_edge)
-                stale |= o.price >= snap.ask if o.action == 'BUY' else o.price <= snap.bid
-                stale |= (abs(o.price-target[0]) >= self.cfg.recenter_move-1e-9 and
-                          self.clock()-o.born >= self.cfg.reprice_delay)
-            if stale:
+                if (sign*self.ledger.positions['RY'] >= 0 and
+                        sign*(snap.fair-o.price)+MAKER_REBATE['RY'] < self.cfg.min_edge):
+                    causes.append('insufficient_edge')
+                if (o.price >= snap.ask if o.action == 'BUY' else o.price <= snap.bid):
+                    causes.append('crosses_external_book')
+                if (abs(o.price-target[0]) >= self.cfg.recenter_move-1e-9 and
+                        self.clock()-o.born >= self.cfg.reprice_delay):
+                    causes.append('recenter')
+            if causes:
+                self.cancel_causes[o.id] = causes
                 result.append(o)
         return result
 
@@ -331,6 +345,9 @@ class Bot(AccountingBot):
         # Confirmation happens via the next normal frame, never a blocking poll loop.
         for o in orders:
             self.pending_cancel[o.id] = (now, reason)
+            self.record.emit('cancel_request', tick=self.tick, order_id=o.id, reason=reason,
+                             causes=self.cancel_causes.pop(o.id, [reason]),
+                             resting_seconds=now-o.born, remaining=o.remaining)
         batch, _ = self.batch([('DELETE', f'orders/{o.id}', {}) for o in orders])
         self.cancel_requests += len(orders)
         errors = []
@@ -410,8 +427,13 @@ class Bot(AccountingBot):
                 self.own_ids.add(str(oid))
                 self.slots[oid] = slot
                 self.intents[oid] = intent
+                reference = self.snapshots.get('RY')
+                mid = reference[0].mid if reference else None
                 self.record.emit('submit', tick=self.tick, order_id=oid, ticker='RY', action=o.action,
-                                 quantity=o.quantity, price=o.price, intent=intent)
+                                 quantity=o.quantity, price=o.price, intent=intent,
+                                 reference_mid=mid, level=slot[1],
+                                 distance_from_mid=((1 if o.action == 'BUY' else -1)*(mid-o.price)
+                                                    if mid is not None else None))
                 self.record.emit('ladder_order', tick=self.tick, order_id=oid, level=slot[1],
                                  child=slot[2], side=o.action)
                 self.apply_order(result)
@@ -540,35 +562,72 @@ class Bot(AccountingBot):
         self.report_started = now
         self.report_counts = self.submissions, self.cancel_requests, self.ledger.volume
 
-    def cleanup(self):
-        if self.round_changed:
-            print('Case reset: old order IDs will not be cancelled.', flush=True)
-            return
-        self.operation = 'cleanup'
+    def finish_if_case_ended(self, error):
+        """Distinguish a boundary authentication response from a mid-case failure."""
+        if not isinstance(error, HttpError) or error.status not in (401, 403):
+            return False
         try:
+            values, times = self.reads([('GET', 'case', {})])
+            case = values[0]
+            tick = float(case['tick'])
+            if not math.isfinite(tick) or case.get('period') != self.period or tick < self.tick:
+                return False
+            if case['status'] != 'STOPPED' and tick < self.cfg.end_tick:
+                return False
+        except (ApiError, KeyError, ValueError, TypeError):
+            return False  # An unverified 401 remains fatal, never silently ignored.
+        self.tick, self.case_seen = tick, times[0]
+        self.note_activity('case_ended_during_request', message=str(error))
+        self.record.emit('case_end_api_error', tick=tick, message=str(error))
+        return True
+
+    def cleanup(self):
+        self.operation = 'cleanup'
+        errors = []
+        final_rows = opened = None
+        accounting = False
+        try:
+            if self.round_changed:
+                raise ApiError('Case reset: old order IDs will not be cancelled')
             case = self.api('GET', 'case')
             if case.get('period') != self.period or float(case['tick']) < self.tick:
-                print('Reset during cleanup; inspect RIT.', flush=True)
-                return
+                self.round_changed = True
+                raise ApiError('Reset during cleanup; old order IDs will not be cancelled')
+            # Record useful final positions even if terminal history has vanished.
             batch, _ = self.batch([('POST', 'commands/cancel', {'ticker': t}) for t in TICKERS])
-            failures = [r for r in batch.results if isinstance(r, Exception)]
+            errors.extend(str(r) for r in batch.results if isinstance(r, Exception))
             if batch.interrupted:
                 raise KeyboardInterrupt
-            if failures:
-                raise failures[0]
-            values, _ = self.reads([('GET', 'orders', {'status': 'OPEN'}), ('GET', 'securities', {})])
-            rows = self.reconcile_frame(*values)
-            final_rows = rows if rows is not None else {r['ticker']: r for r in values[1]}
-            positions = {t: integer(final_rows[t]['position']) for t in TICKERS}
-            self.record.emit('end', tick=self.tick, volume=self.ledger.volume,
-                             qualified=self.ledger.volume >= self.cfg.minimum_volume, positions=positions,
-                             open_orders=len(values[0]), accounting_confirmed=rows is not None and not self.history_gaps,
-                             unknown_order_ids=sorted(self.history_gaps),
-                             server_pnl=self.pnl(final_rows),
-                             run_pnl=(self.pnl(final_rows)-self.start_pnl
-                                      if self.pnl(final_rows) is not None and self.start_pnl is not None else None))
-            print(f'Final confirmed volume={self.ledger.volume:,}; positions={positions}; '
-                  f'open orders={len(values[0])}; '
-                  f'accounting confirmed={rows is not None and not self.history_gaps}', flush=True)
+            batch, _ = self.batch([('GET', 'orders', {'status': 'OPEN'}), ('GET', 'securities', {})])
+            if batch.interrupted:
+                raise KeyboardInterrupt
+            for i, value in enumerate(batch.results):
+                if isinstance(value, Exception):
+                    errors.append(str(value))
+                elif i == 0:
+                    opened = value
+                else:
+                    final_rows = self.position_rows(value)
+            if opened is not None and final_rows is not None:
+                rows = self.reconcile_frame(opened, list(final_rows.values()))
+                if rows is not None:
+                    final_rows = rows
+                    accounting = not self.history_gaps
         except (ApiError, KeyError, ValueError, TypeError) as exc:
-            print(f'Cleanup not confirmed: {exc}. Inspect RIT.', flush=True)
+            errors.append(str(exc))
+        finally:
+            positions = ({t: integer(final_rows[t]['position']) for t in TICKERS}
+                         if final_rows is not None else None)
+            value = self.pnl(final_rows) if final_rows is not None else None
+            confirmed = accounting and opened == [] and not errors
+            self.record.emit('end', tick=self.tick, volume=self.ledger.volume,
+                             qualified=self.ledger.volume >= self.cfg.minimum_volume,
+                             positions=positions, open_orders=len(opened) if opened is not None else None,
+                             accounting_confirmed=accounting, cleanup_confirmed=confirmed,
+                             unknown_order_ids=sorted(self.history_gaps), cleanup_errors=errors,
+                             round_changed=self.round_changed, server_pnl=value,
+                             run_pnl=value-self.start_pnl if value is not None and self.start_pnl is not None else None)
+            print(f'Final confirmed volume={self.ledger.volume:,}; positions={positions}; '
+                  f'cleanup confirmed={confirmed}', flush=True)
+            if errors:
+                print('Cleanup incomplete: '+'; '.join(errors)+'. Inspect RIT.', flush=True)

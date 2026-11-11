@@ -135,13 +135,15 @@ def main():
             except UnknownWrite:
                 raise
             except ApiError as exc:
+                if bot.finish_if_case_ended(exc):
+                    break
                 failures += 1
-                bot.record.emit('error', message=str(exc))
                 print(exc)
                 if bot.round_changed or isinstance(exc, HttpError) and exc.status in (401, 403) or failures >= 5:
                     raise
                 # Next bounded cycle revalidates the case and reconciles before
                 # any new write. Never enter a nested full-cancel polling loop.
+                bot.record.emit('error', message=str(exc), failures=failures)
                 bot.note_activity('api_error_retry', message=str(exc), failures=failures)
                 time.sleep(min(1, .2*failures))
             time.sleep(max(0, bot.next_delay-(time.monotonic()-cycle_started)))

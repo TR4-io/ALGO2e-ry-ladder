@@ -16,7 +16,7 @@ class ReplenishmentTests(unittest.TestCase):
                 with self.subTest(backend=backend.__module__, side=side):
                     x = BatchExchange()
                     # Isolate replenishment from intentional price-recentering.
-                    b = backend(x, Config(skew=0,child_order_size=5000), clock=lambda: x.now)
+                    b = backend(x, Config(sizes=(5000,4000,2500,1000),skew=0,child_order_size=5000), clock=lambda: x.now)
                     with contextlib.redirect_stdout(io.StringIO()):
                         b.start()
                         b.step()
@@ -37,7 +37,7 @@ class ReplenishmentTests(unittest.TestCase):
 
     def test_repeated_fill_replenishment_respects_capacity_until_limit(self):
         x = BatchExchange()
-        b = Bot(x, Config(skew=0,child_order_size=5000), clock=lambda: x.now)
+        b = Bot(x, Config(sizes=(5000,4000,2500,1000),skew=0,child_order_size=5000), clock=lambda: x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start()
             b.step()
@@ -64,7 +64,7 @@ class ReplenishmentTests(unittest.TestCase):
             snap = snapshot(bid=99.99, ask=100.01, fair=100, mid=100)
             plan = ladder(snap, pos, Config())
             price, qty = plan[(side, 0)]
-            self.assertEqual(qty, 5000)
+            self.assertEqual(qty, 6500)
             sign = 1 if side == 'BUY' else -1
             self.assertGreaterEqual(sign*(snap.fair-price)+MAKER_REBATE['RY'], Config().min_edge)
             self.assertEqual(price, 100.02 if side == 'SELL' else 99.98)

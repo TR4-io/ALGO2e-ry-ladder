@@ -2,6 +2,7 @@
 import argparse
 from collections import defaultdict
 import json
+from run_metrics import quality_summary
 
 
 def summarize(path):
@@ -16,6 +17,7 @@ def summarize(path):
     recoveries = []
     latest_reconciliation = None
     fills = []
+    events = []
     levels = {}
     max_inventory = 0
     peak = 0.0
@@ -28,6 +30,7 @@ def summarize(path):
                 errors.append(f'Malformed log line {line_number}; possibly interrupted write')
                 continue
             kind = event['event']
+            events.append(event)
             if kind == 'runtime_cycle':
                 latest_runtime = event
                 runtime_reasons[event['reason']] += 1
@@ -52,8 +55,9 @@ def summarize(path):
                 totals['intent_'+event['intent']] += event['quantity']
             elif kind == 'markout':
                 key = f"{event['ticker']} {event['action']} {event['intent']} {event['horizon']}s"
-                drift[key][0] += event['post_detection_drift']*event['quantity']
-                drift[key][1] += event['quantity']
+                if event.get('post_detection_drift') is not None:
+                    drift[key][0] += event['post_detection_drift']*event['quantity']
+                    drift[key][1] += event['quantity']
             elif kind == 'execution_timing':
                 latest_execution_timing = event
             elif kind == 'status':
@@ -72,7 +76,7 @@ def summarize(path):
         slot = levels.get(event.get('order_id'))
         key = f'{slot[0]} level {slot[1]}' if slot else event['intent']
         by_level[key] += event['quantity']
-    return dict(latest_runtime=latest_runtime, runtime_reasons=dict(runtime_reasons), diagnostics=dict(diagnostics), risk_stop=risk_stop, latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
+    return dict(quality=quality_summary(events), latest_runtime=latest_runtime, runtime_reasons=dict(runtime_reasons), diagnostics=dict(diagnostics), risk_stop=risk_stop, latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
                 recoveries=recoveries, latest_reconciliation=latest_reconciliation,
                 sampled_max_ry_inventory=max_inventory, sampled_max_drawdown=max_drawdown,
                 file=str(path), completed=end is not None, final=end, latest_status=last_status,

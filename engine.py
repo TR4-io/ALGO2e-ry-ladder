@@ -43,6 +43,7 @@ class Bot:
         self.pending = []
         self.toxicity = defaultdict(float)
         self.markout_count = defaultdict(int)
+        self.markout_shares = defaultdict(int)
         self.last_take = defaultdict(lambda: -math.inf)
         self.period = None
         self.tick = -1
@@ -149,11 +150,15 @@ class Bot:
         now = self.clock()
         intent = self.intents.get(oid, 'unknown')
         self.record.emit('fill', tick=self.tick, order_id=oid, ticker=o.ticker, action=o.action,
-                         quantity=delta, limit_price=o.price, execution_price=fill_price, intent=intent)
+                         quantity=delta, limit_price=o.price, execution_price=fill_price, intent=intent,
+                         level=self.slots.get(oid, (None, None))[1], detection_age=now-o.born)
         snapshot = self.snapshots.get(o.ticker)
-        if snapshot and now-snapshot[1] <= self.cfg.max_book_age:
+        # Execution-price markouts do not require a pre-fill midpoint.
+        ref = snapshot[0].mid if snapshot and now-snapshot[1] <= self.cfg.max_book_age else None
+        if fill_price is not None or ref is not None:
             for horizon in (.5, 1., 3.):
-                self.pending.append((now, horizon, o.ticker, o.action, delta, snapshot[0].mid, fill_price, intent))
+                self.pending.append((now, horizon, o.ticker, o.action, delta, ref, fill_price, intent,
+                                     oid, self.slots.get(oid, (None, None))[1]))
 
     def lookup_once(self, oid):
         try:
@@ -265,26 +270,38 @@ class Bot:
     def markouts(self, ticker, snap):
         now = self.clock()
         keep = []
-        for born, horizon, t, side, qty, ref, price, intent in self.pending:
+        for item in self.pending:
+            born, horizon, t, side, qty, ref, price, intent, oid, level = item
             if t != ticker or now-born < horizon:
                 if now-born < 10:
-                    keep.append((born, horizon, t, side, qty, ref, price, intent))
+                    keep.append(item)
                 continue
             if now-born > horizon+.75:
                 continue  # do not mislabel delayed observations as short-horizon markouts
             sign = 1 if side == 'BUY' else -1
-            drift = sign*(snap.mid-ref)
+            drift = sign*(snap.mid-ref) if ref is not None else None
+            gross = sign*(snap.mid-price) if price is not None else None
+            # Per-fill liquidity role is unknown. Explicit passive-fee assumption.
+            adjusted = gross+MAKER_REBATE[t] if gross is not None else None
             self.record.emit('markout', tick=self.tick, ticker=t, action=side, quantity=qty,
                              horizon=horizon, elapsed=now-born, post_detection_drift=drift,
-                             gross_markout=sign*(snap.mid-price) if price is not None else None, intent=intent)
+                             gross_markout=gross, maker_adjusted_markout=adjusted,
+                             fee_assumption='passive', intent=intent, order_id=oid, level=level)
             if horizon == 1 and intent == 'MAKE':
                 key = (t, side)
-                self.markout_count[key] += 1
-                self.toxicity[key] += .1*(max(0, -drift)-self.toxicity[key])
+                value = adjusted if self.cfg.markout_penalty_mode == 'execution' else drift
+                if value is not None:
+                    self.markout_count[key] += 1
+                    self.markout_shares[key] += qty
+                    # Same learning rate for one large fill or equivalent children.
+                    weight = 1-.9**(qty/1000) if self.cfg.markout_penalty_mode == 'execution' else .1
+                    self.toxicity[key] += weight*(max(0, -value)-self.toxicity[key])
         self.pending = keep
 
     def penalty(self, ticker, action):
         key = (ticker, action)
+        if self.cfg.markout_penalty_mode == 'execution':
+            return min(.03, self.toxicity[key]) if self.markout_shares[key] >= self.cfg.markout_min_shares else 0
         return min(.03, self.toxicity[key])*min(1, self.markout_count[key]/10)
 
     def manage_exit(self, ticker, book, observed):

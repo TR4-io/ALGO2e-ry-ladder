@@ -14,7 +14,7 @@ from tests.test_fast_execution import BatchExchange
 class ChildOrderTests(unittest.TestCase):
     def ready(self, backend=Bot):
         x = BatchExchange()
-        b = backend(x, Config(skew=0), clock=lambda: x.now)
+        b = backend(x, Config(sizes=(5000,4000,2500,1000),child_order_size=500,skew=0), clock=lambda: x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start()
             for _ in range(7):

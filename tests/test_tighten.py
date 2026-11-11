@@ -12,7 +12,7 @@ from tests.test_lifecycle import snapshot, row
 
 class TightenTests(unittest.TestCase):
     def bot(self):
-        b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:1)
+        b=Bot(Mock(),Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:1)
         b.tick=0
         b.check_fill_activity()
         return b
@@ -48,7 +48,7 @@ class TightenTests(unittest.TestCase):
         b.mode='MAKE';b.check_fill_activity();self.assertTrue(b.tight_ladder)
 
     def test_transition_cancels_all_old_quotes_before_replacing_even_small_moves(self):
-        x=Exchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now);b.tick=0;b.manage('RY')
+        x=Exchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now);b.tick=0;b.manage('RY')
         self.assertEqual(len(x.orders),8)
         x.now=50;b.tick=50;b.manage('RY')
         self.assertTrue(b.tight_ladder)
@@ -60,7 +60,7 @@ class TightenTests(unittest.TestCase):
         self.assertEqual(sum(o.remaining for o in b.ledger.active() if o.action=='BUY'),12500)
 
     def test_failed_cancellation_retains_transition_obligation(self):
-        x=Exchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now);b.tick=0;b.manage('RY')
+        x=Exchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now);b.tick=0;b.manage('RY')
         x.now=50;b.tick=50
         with patch.object(b,'cancel',side_effect=ApiError('pending')):
             with self.assertRaises(ApiError):b.manage('RY')

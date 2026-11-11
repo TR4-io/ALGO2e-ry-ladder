@@ -26,7 +26,7 @@ class BatchExchange(LadderExchange):
 
 class FastTests(unittest.TestCase):
     def test_parallel_snapshot_and_single_ledger_owner(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):b.start();self.assertTrue(b.step())
         self.assertEqual(len(x.orders),8)
         self.assertEqual(b.ledger.positions,x.positions)
@@ -34,8 +34,8 @@ class FastTests(unittest.TestCase):
         self.assertFalse(b.frame)
 
     def test_all_sibling_successes_recorded_after_unknown_write(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0)
-        plan=ladder(snapshot(),0,Config())
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0)
+        plan=ladder(snapshot(),0,b.cfg)
         real=x.batch
         def batch(calls,**kwargs):
             out=real(calls,**kwargs)
@@ -51,8 +51,8 @@ class FastTests(unittest.TestCase):
         self.assertEqual(len(x.orders),8)
 
     def test_known_rejection_does_not_lose_successful_siblings(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0)
-        plan=ladder(snapshot(),0,Config())
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0)
+        plan=ladder(snapshot(),0,b.cfg)
         x.batch=Mock(return_value=Batch([HttpError(400,'orders')]+[
             row(oid=i,ticker='RY',action=slot[0],quantity=qty,price=price)
             for i,(slot,(price,qty)) in enumerate(list(plan.items())[1:],2)]))
@@ -61,7 +61,7 @@ class FastTests(unittest.TestCase):
         self.assertFalse(b.write_uncertain)
 
     def test_entire_batch_reserved_and_safe_for_one_sided_fills(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0);plan=ladder(snapshot(),0,Config())
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0);plan=ladder(snapshot(),0,b.cfg)
         real=x.batch
         def batch(calls,**kwargs):
             self.assertEqual(len(b.inflight),8)
@@ -79,19 +79,19 @@ class FastTests(unittest.TestCase):
         self.assertEqual(b.ledger.volume,12500)
 
     def test_stale_batch_is_never_dispatched(self):
-        x=BatchExchange();x.batch=Mock();b=Bot(x,Config(child_order_size=5000),clock=lambda:2)
+        x=BatchExchange();x.batch=Mock();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:2)
         b.place_targets('RY',ladder(snapshot(),0,Config()),0,0,0)
         x.batch.assert_not_called()
 
     def test_expired_queued_orders_are_not_replayed(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0)
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0)
         x.batch=Mock(return_value=Batch([ExpiredQuote('stale')]*8))
         b.place_targets('RY',ladder(snapshot(),0,Config()),0,0,0)
         self.assertFalse(b.ledger.orders);self.assertFalse(b.inflight)
         self.assertEqual(x.batch.call_count,1)
 
     def test_cancel_batch_confirms_racing_fills_before_returning(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0);b.manage('RY')
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0);b.manage('RY')
         real=x.batch
         def batch(calls,**kw):
             if calls[0][0]=='DELETE':
@@ -103,7 +103,7 @@ class FastTests(unittest.TestCase):
         self.assertFalse(b.ledger.active())
 
     def test_unconfirmed_batch_keeps_reservations(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0);b.manage('RY')
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0);b.manage('RY')
         real=x.batch
         def batch(calls,**kw):
             if calls[0][0]=='DELETE':return Batch([{'success':True}]*len(calls))
@@ -114,7 +114,7 @@ class FastTests(unittest.TestCase):
         self.assertEqual(len(b.ledger.active()),8)
 
     def test_interrupt_still_accounts_for_accepted_orders(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0);real=x.batch
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0);real=x.batch
         def batch(calls,**kw):
             out=real(calls,**kw);out.interrupted=True;return out
         x.batch=batch
@@ -122,14 +122,14 @@ class FastTests(unittest.TestCase):
         self.assertEqual(len(b.ledger.orders),8)
 
     def test_reset_snapshot_causes_no_write(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:0);b.period=2
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:0);b.period=2
         with self.assertRaises(ApiError):b.step()
         self.assertTrue(b.round_changed);self.assertFalse(x.orders)
 
     def test_fast_full_rounds(self):
         for regime in ('oscillation','crowded','trend','jump','one_sided'):
             with self.subTest(regime=regime):
-                x=BatchExchange(11,regime);b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
+                x=BatchExchange(11,regime);b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now)
                 with contextlib.redirect_stdout(io.StringIO()):
                     b.start()
                     while b.step():
@@ -219,7 +219,7 @@ class InterruptionTests(unittest.TestCase):
         finally:c.close()
 
     def test_single_liquidation_order_has_dispatch_deadline(self):
-        x=BatchExchange();b=Bot(x,Config(child_order_size=5000),clock=lambda:1)
+        x=BatchExchange();b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:1)
         b.raw_api=Mock(side_effect=ExpiredQuote('queued too long'))
         self.assertIsNone(b.submit('RY','SELL',100,10,'EXIT',1))
         self.assertEqual(b.raw_api.call_args.kwargs['_deadline'],1.6)

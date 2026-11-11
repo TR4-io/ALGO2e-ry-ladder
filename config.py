@@ -6,9 +6,9 @@ import math
 @dataclass(frozen=True)
 class Config:
     offsets: tuple = (.02, .04, .08, .15)
-    sizes: tuple = (5000, 4000, 2500, 1000)
+    sizes: tuple = (6500, 4000, 1500, 500)
     tight_offsets: tuple = (.02, .03, .05, .08)
-    child_order_size: int = 500
+    child_order_size: int = 1000
     max_submit_batch: int = 8
     max_cancel_batch: int = 8
     reconcile_timeout: float = 1
@@ -30,9 +30,11 @@ class Config:
     inventory_brake: int = 15000
     inventory_age: float = 8
     exit_clip: int = 5000
-    skew: float = .03
+    skew: float = .05
     recenter_move: float = .03
-    reprice_delay: float = .8
+    reprice_delay: float = 1.2
+    markout_penalty_mode: str = 'execution'
+    markout_min_shares: int = 5000
     # Deprecated compatibility fields: trend-based pauses are no longer used.
     trend_window: float = 2
     trend_move: float = .06
@@ -62,6 +64,10 @@ class Config:
 
     def validate(self):
         for name, value in asdict(self).items():
+            if name == 'markout_penalty_mode':
+                if value not in ('execution', 'drift'):
+                    raise ValueError('markout_penalty_mode must be execution or drift')
+                continue
             if name in ('scheduled_closeout', 'inventory_throttle'):
                 if type(value) is not bool:
                     raise ValueError(f'{name} must be boolean')
@@ -89,8 +95,10 @@ class Config:
             raise ValueError('Invalid fill monitoring window or activation tick')
         if type(self.min_window_fills) is not int or self.min_window_fills <= 0:
             raise ValueError('min_window_fills must be a positive integer')
-        if any(type(x) is not int or not 1 <= x <= 5000 for x in self.sizes):
-            raise ValueError('Each size must be an integer from 1 to 5000')
+        if any(type(x) is not int or not 1 <= x <= self.stock_budget for x in self.sizes):
+            raise ValueError('Each aggregate level size must be within the stock budget')
+        if type(self.markout_min_shares) is not int or self.markout_min_shares < 1:
+            raise ValueError('markout_min_shares must be a positive integer')
         for name in ('minimum_volume','gross_budget','net_budget','stock_budget','inventory_brake','exit_clip'):
             if type(getattr(self,name)) is not int:
                 raise ValueError(f'{name} must be an integer')

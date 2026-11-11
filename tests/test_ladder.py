@@ -4,16 +4,16 @@ from unittest.mock import Mock
 from config import Config
 from engine import Bot
 from execution import Order, capacity, risk_bounds, TICKERS
-from policy import ladder, phase
+from policy import ladder, phase, split_targets
 from tests.test_lifecycle import snapshot
 
 class LadderTests(unittest.TestCase):
     def test_four_levels_per_side_and_fee_margin(self):
         plan = ladder(snapshot(bid=99.99, ask=100.01, mid=100, fair=100), 0, Config())
         self.assertEqual([plan[('BUY', i)] for i in range(4)],
-                         [(99.98,5000),(99.96,4000),(99.92,2500),(99.85,1000)])
+                         [(99.98,6500),(99.96,4000),(99.92,1500),(99.85,500)])
         self.assertEqual([plan[('SELL', i)] for i in range(4)],
-                         [(100.02,5000),(100.04,4000),(100.08,2500),(100.15,1000)])
+                         [(100.02,6500),(100.04,4000),(100.08,1500),(100.15,500)])
 
     def test_never_improves_wider_market_or_crosses(self):
         snap=snapshot(bid=99.8,ask=100.2,mid=100,fair=100)
@@ -56,7 +56,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(phase(c,20,0,True),'EXIT')
 
     def test_bad_config(self):
-        for kw in ({'offsets':[.03,.02]}, {'sizes':[6000]*4}, {'sizes':[True]*4},
+        for kw in ({'offsets':[.03,.02]}, {'sizes':[7000]*4}, {'sizes':[True]*4},
                    {'offsets':[float('nan')]*4}, {'inventory_brake':25000},
                    {'recenter_move':0}, {'stock_budget':12000}):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
@@ -64,7 +64,8 @@ class LadderTests(unittest.TestCase):
 
     def test_full_side_sweep_fits_capacity_without_netting(self):
         positions=dict.fromkeys(TICKERS,0); orders=[]; cfg=Config()
-        for (side,i),(price,q) in ladder(snapshot(),0,cfg).items():
+        for slot,(price,q) in split_targets(ladder(snapshot(),0,cfg),cfg.child_order_size).items():
+            side=slot[0]
             safe=capacity(positions,orders,'RY',side,q,cfg.gross_budget,cfg.net_budget,cfg.stock_budget)
             self.assertEqual(safe,q)
             orders.append(Order(len(orders),'RY',side,q,price,0))
@@ -73,7 +74,7 @@ class LadderTests(unittest.TestCase):
 
     def test_manage_only_ry_and_preserves_unchanged_queue(self):
         from tests.exchange import Exchange
-        x=Exchange(); b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now)
+        x=Exchange(); b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now)
         b.manage('CNR'); self.assertEqual(x.calls,0)
         b.manage('RY'); self.assertEqual(len(x.orders),8)
         b.manage('RY'); self.assertEqual(len(x.orders),8); self.assertEqual(x.cancels,0)
@@ -89,7 +90,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(len(x.orders),before)
 
     def test_cancel_race_replans_before_submitting(self):
-        b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:2)
+        b=Bot(Mock(),Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:2)
         b.book=Mock(return_value=({'bids':[(10,1000)],'asks':[(10.02,1000)]},2))
         b.ledger.orders[1]=Order(1,'RY','BUY',1500,10.10,0)
         b.slots[1]=('BUY',0)
@@ -101,7 +102,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(b.ledger.positions['RY'],1500)
 
     def test_keeps_both_sides_after_downward_mid_move(self):
-        b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:2)
+        b=Bot(Mock(),Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:2)
         b.mid_history=[(.5,10.15)]
         b.book=Mock(return_value=({'bids':[(10,1000)],'asks':[(10.02,1000)]},2))
         b.submit=Mock(return_value=None)
@@ -115,7 +116,7 @@ class LifecycleIntegrationTests(unittest.TestCase):
     def test_reduce_phase_submits_passive_inventory_exit(self):
         from tests.exchange import Exchange
         x=Exchange();x.now=276;x.positions['RY']=500
-        b=Bot(x,Config(child_order_size=5000),clock=lambda:x.now);b.mode='REDUCE';b.tick=276;b.case_seen=276
+        b=Bot(x,Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:x.now);b.mode='REDUCE';b.tick=276;b.case_seen=276
         b.ledger.positions['RY']=500
         b.manage('RY')
         self.assertEqual(len(x.orders),1)
@@ -134,7 +135,7 @@ class LifecycleIntegrationTests(unittest.TestCase):
         self.assertFalse(x.orders)
 
     def test_reducing_order_cannot_cross_inventory_on_synchronous_fill(self):
-        b=Bot(Mock(),Config(child_order_size=5000),clock=lambda:1);b.ledger.positions['RY']=500
+        b=Bot(Mock(),Config(sizes=(5000,4000,2500,1000),child_order_size=5000),clock=lambda:1);b.ledger.positions['RY']=500
         b.book=Mock(return_value=({'bids':[(10,1000)],'asks':[(10.02,1000)]},1))
         def submit(*args):
             b.ledger.positions['RY']=0

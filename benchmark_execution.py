@@ -32,6 +32,7 @@ def run(seconds=8, cap=60, latency=.02):
             return exchange.call(method, path, **params)
     client._request = request  # No HTTP/network access.
     b = Bot(client, replace(Config(), request_cap=cap))
+    target_orders = 2*sum((size+b.cfg.child_order_size-1)//b.cfg.child_order_size for size in b.cfg.sizes)
     full_at = None
     latencies = []
     next_fill = origin+2
@@ -50,7 +51,7 @@ def run(seconds=8, cap=60, latency=.02):
                         pending = (b.slots[child.id], child.id, time.monotonic())
                         next_fill = cycle_start+1
                 b.step()
-                if full_at is None and len(b.working()) == 50:
+                if full_at is None and len(b.working()) == target_orders:
                     full_at = time.monotonic()-origin
                 if pending:
                     slot, oid, filled_at = pending
@@ -67,7 +68,7 @@ def run(seconds=8, cap=60, latency=.02):
     assert max_requests <= cap
     assert not b.working()
     return dict(artificial_latency_ms=latency*1000, request_cap=cap,
-                benchmark_seconds=seconds, seconds_to_50_orders=full_at,
+                benchmark_seconds=seconds, target_orders=target_orders, seconds_to_full_ladder=full_at,
                 submissions=b.submissions, confirmed_fill_shares=b.ledger.volume,
                 tested_replenishments=len(latencies),
                 refill_seconds_max=max(latencies, default=None),

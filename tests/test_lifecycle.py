@@ -183,8 +183,9 @@ class ExecutionTests(unittest.TestCase):
 
     def test_markouts_skip_delayed_samples_and_learn_adverse_drift(self):
         b = self.bot(1)
-        b.pending = [(0, 1, 'CNR', 'BUY', 100, 10.02, None, 'MAKE'),
-                     (-10, 1, 'CNR', 'BUY', 100, 11, None, 'MAKE')]
+        b.cfg = replace(b.cfg, markout_penalty_mode='drift')
+        b.pending = [(0, 1, 'CNR', 'BUY', 100, 10.02, None, 'MAKE', 1, 0),
+                     (-10, 1, 'CNR', 'BUY', 100, 11, None, 'MAKE', 2, 0)]
         b.markouts('CNR', snapshot(mid=10))
         self.assertEqual(b.markout_count[('CNR', 'BUY')], 1)
         self.assertGreater(b.penalty('CNR', 'BUY'), 0)

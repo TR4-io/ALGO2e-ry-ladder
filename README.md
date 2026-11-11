@@ -1,6 +1,6 @@
-# ALGO2e RY ladder — continuous-v3
+# ALGO2e RY ladder — continuous-v4
 
-RY-only market making for the RIT Client REST API. This version rebuilds the execution loop around bounded cycles, independent replenishment and confirmed order accounting. The 25,000-share stock/gross/net ceilings and the weighted ladder remain. It is a simulation strategy, not a proven profit-maximizing calibration.
+RY-only market making for the RIT Client REST API. This version rebuilds the execution loop around bounded cycles, independent replenishment and confirmed order accounting. This update increases near-level allocation and child size, strengthens inventory price skew, and measures fill quality against execution prices. The 25,000-share stock/gross/net ceilings remain. It is a simulation strategy, not a proven profit-maximizing calibration.
 
 ## Run the complete updated folder
 
@@ -14,7 +14,7 @@ python strategy.py
 
 `--check` reads only. The last command sends orders to the connected simulation. Defaults are `http://localhost:9999/v1` and API key `Rotman`; override locally with `RIT_BASE_URL` and `RIT_API_KEY`.
 
-**Spyder:** replace the whole repository folder, restart the Python kernel once, then run this folder's `strategy.py`. Script startup refreshes the complete local dependency group before creating the bot, including when invoked with `%runfile`. It also prints the code folder. The expected banner is **`RY ladder continuous-v3: fresh runtime`**. Copying only `strategy.py` can leave incompatible files behind. The heartbeat tolerates missing diagnostics and reports a clear message instead of dying.
+**Spyder:** replace the whole repository folder, restart the Python kernel once, then run this folder's `strategy.py`. Script startup refreshes the complete local dependency group before creating the bot, including when invoked with `%runfile`. It also prints the code folder. The expected banner is **`RY ladder continuous-v4: fresh runtime`**. Copying only `strategy.py` can leave incompatible files behind. The heartbeat tolerates missing diagnostics and reports a clear message instead of dying.
 
 ## How placement now works
 
@@ -32,16 +32,20 @@ HTTP 429 cooldown is shared, with one 20% cap reduction per cooldown and gradual
 
 ## Ladder and quantity
 
-| Distance on each side of adjusted fair | Total shares per side at this level | 500-share children per side |
+| Base distance on each side of adjusted fair | Total shares per side at this level | Children per side |
 |---|---:|---:|
-| 2 cents | 5,000 | 10 |
-| 4 cents | 4,000 | 8 |
-| 8 cents | 2,500 | 5 |
-| 15 cents | 1,000 | 2 |
+| 2 cents | 6,500 | 6 × 1,000 + 500 |
+| 4 cents | 4,000 | 4 × 1,000 |
+| 8 cents | 1,500 | 1,000 + 500 |
+| 15 cents | 500 | 1 × 500 |
 
-Up to **50 resting orders**, totaling **12,500 shares per side** from flat, are staged over several cycles. These are per-side distances: a symmetric 2-cent bid/ask pair is four cents wide. Splitting orders does not increase aggregate quantity, improve queue priority or create counterparties.
+Up to **28 resting orders**, totaling **12,500 shares per side** from flat, are staged over several cycles. These are per-side distances: a symmetric 2-cent bid/ask pair is four cents wide. Splitting orders does not increase aggregate quantity, improve queue priority or create counterparties.
 
-Fully filled children replenish independently; partial children retain their remaining quantity and queue position. Child IDs within each level remain stable even as available capacity changes. Prices preserve a fee-adjusted minimum edge and stay passive against the external book. Inventory skew, volatility, adverse-fill penalties and duplicate-price coalescing can change prices or reduce the number of eligible slots. The nearest quote is moved to the edge floor rather than dropped solely because inventory skew moved it too close to fair.
+Fully filled children replenish independently; partial children retain their remaining quantity and queue position. Child IDs within each level remain stable even as available capacity changes. Prices preserve a fee-adjusted minimum edge and stay passive against the external book. Inventory skew, volatility, adverse-fill penalties and duplicate-price filtering can change prices or reduce the number of eligible slots. The nearest quote is moved to the edge floor rather than dropped solely because inventory skew moved it too close to fair.
+
+Ordinary repricing waits at least **1.2 seconds** after order creation and requires a **3-cent** target move, preserving queue time through small changes. Crossed quotes, insufficient edge and obsolete/oversized slots can still be cancelled immediately. Filled slots replenish without this repricing delay. Inventory price skew reaches **5 cents** at the 25,000-share ceiling; it moves the quote center without introducing a trading pause.
+
+Adaptive widening now uses the signed difference between execution price and the midpoint one second after fill detection, less the assumed maker fee. Negative midpoint drift alone no longer penalizes a still-profitable fill. Each side needs 5,000 observed shares before applying the penalty, which remains capped at 3 cents; learning is weighted by share volume. Missing execution prices are excluded, and per-fill liquidity role is not known, so the fee assumption is recorded explicitly. This is a markout measure, not realized round-trip profit.
 
 RY maker fee is $0.002/share and taker rebate is $0.0014/share under the supplied case settings. A completed passive buy/sell cycle subtracts $0.004/share in maker fees from its actual price difference. The screenshots motivated the strategy; candle highs/lows do not establish executable fills.
 
@@ -98,7 +102,26 @@ python stress_check.py
 python benchmark_execution.py
 ```
 
-`child_order_size` defaults to 500; 5,000 restores one child per level. `max_submit_batch` and `max_cancel_batch` default to eight. Child plans are limited to 100 orders across both sides. `request_cap` defaults to 60 and `io_workers` to four. `reconcile_timeout` defaults to one elapsed second before automatic recovery, `cancel_retry_seconds` to one, and `telemetry_seconds` to one.
+`child_order_size` defaults to 1,000. `sizes` are aggregate level allocations, so the 6,500-share nearest level is split across individual orders even with a 5,000-share child setting. `max_submit_batch` and `max_cancel_batch` default to eight. Child plans are limited to 100 orders across both sides. `request_cap` defaults to 60 and `io_workers` to four. `reconcile_timeout` defaults to one elapsed second before automatic recovery, `cancel_retry_seconds` to one, and `telemetry_seconds` to one.
+
+### Compare candidates reproducibly
+
+The default is the complete v4 candidate. Full configuration snapshots in `profiles/` isolate incremental changes:
+
+| Profile | Change from the previous row |
+|---|---|
+| `baseline-v3.json` | Prior sizing, 500-share children, 3-cent skew, drift-based widening, 0.8-second repricing |
+| `a-children.json` | 1,000-share children |
+| `b-skew.json` | 5-cent inventory skew |
+| `c-allocation.json` | 6,500 / 4,000 / 1,500 / 500 shares per side |
+| `d-markouts.json` | Execution-price markouts for adaptive widening |
+| `e-queue.json` | 1.2-second ordinary repricing; matches v4 defaults |
+
+For example: `python strategy.py --config profiles/a-children.json`. An existing custom JSON overrides defaults; use the updated example or these profiles when comparing settings. The baseline profile reproduces prior policy settings on the current execution engine, not an identical replay of the old binary.
+
+`analyze_run.py` now reports `quality`: fill/submission shares by level, actual midpoint distances, cancellation causes and ages, execution-price markouts with observed-volume coverage, and sampled time near the inventory ceiling. Existing fields remain compatible. New logs identify the order and level for each markout; older logs cannot support that attribution. Final records distinguish confirmed accounting/cleanup from an ended log. A 401/403 is treated as a case-boundary event only after a fresh same-round case read verifies termination; an unverified or active-case authentication failure still ends submission.
+
+Select settings using several comparable competitive runs and official final P&L, alongside inventory, drawdown and execution-quality results. Fewer requests and more near-level shares are candidate improvements; this update does not establish a profit-optimal size or width.
 
 The benchmark uses the real paced worker transport with an in-memory exchange and artificial latency; it never contacts RIT. Fill events are injected to test replenishment. Stress tests validate mechanics and accounting, not profitability. See [REVIEW.md](REVIEW.md) and [VALIDATION.md](VALIDATION.md) for review findings and measured results.
 

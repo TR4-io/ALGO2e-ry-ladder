@@ -1,4 +1,4 @@
-"""Tests exercise the new default runtime, including slow/non-atomic exchange I/O."""
+"""Current runtime with historical 500-share lifecycle fixtures; v4 sizing has separate tests."""
 import contextlib
 import io
 import json
@@ -56,7 +56,8 @@ class RuntimeExchange(BatchExchange):
 def setup(**kwargs):
     x = RuntimeExchange()
     log = io.StringIO()
-    b = Bot(x, Config(**kwargs), Recorder(log), clock=lambda: x.now)
+    historical = dict(sizes=(5000,4000,2500,1000), child_order_size=500, skew=.03, reprice_delay=.8)
+    b = Bot(x, Config(**dict(historical, **kwargs)), Recorder(log), clock=lambda: x.now)
     b.start()
     return x, b, log
 
@@ -254,7 +255,7 @@ class RuntimeTests(unittest.TestCase):
         for regime in ('oscillation','crowded','trend','jump','one_sided'):
             with self.subTest(regime=regime):
                 result=exercise(11,regime,runtime=True)
-                self.assertEqual(result['execution_backend'],'continuous-v3')
+                self.assertEqual(result['execution_backend'],'continuous-v4')
                 self.assertGreater(result['volume'],0)
                 self.assertLessEqual(result['max_inventory'],25000)
 
