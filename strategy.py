@@ -132,7 +132,8 @@ def main():
                 heartbeat.stage("rate-limit cooldown")
                 time.sleep(exc.wait)
                 continue
-            except UnknownWrite:
+            except UnknownWrite as exc:
+                bot.audit_submission_failure(exc)
                 raise
             except ApiError as exc:
                 if bot.finish_if_case_ended(exc):

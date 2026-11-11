@@ -13,7 +13,7 @@ from execution import (ApiError, HttpError, UnknownWrite, Order, TICKERS,
 from concurrent_client import ExpiredQuote
 from policy import ladder, split_targets, submission_targets, phase, sweep
 
-BUILD = 'continuous-v4'
+BUILD = 'continuous-v4.1'
 
 
 class Bot(AccountingBot):
@@ -24,6 +24,8 @@ class Bot(AccountingBot):
         self.cancel_causes = {}
         self.unresolved_since = None
         self.write_uncertain = False
+        self.uncertain_submissions = []
+        self.submission_failure_context = None
         self.own_ids = set()
         self.operation = 'startup'
         self.last_cycle_report = -math.inf
@@ -98,7 +100,7 @@ class Bot(AccountingBot):
             if pending:
                 self.record.emit('cancel', tick=self.tick, order_id=oid, reason=pending[1],
                                  resting_seconds=self.clock()-o.born,
-                                 cancelled_remaining=o.quantity-o.filled)
+                                 cancelled_remaining=o.quantity-o.filled, terminal_status=o.status)
             self.requote_orders.discard(oid)
 
     def reconcile_orders(self, opened):
@@ -415,7 +417,7 @@ class Bot(AccountingBot):
                 continue
             if isinstance(result, Exception):
                 if isinstance(result, UnknownWrite):
-                    self.write_uncertain = True
+                    self.remember_uncertain_submission(slot, reserved, result)
                 errors.append(result)
                 continue
             try:
@@ -439,8 +441,9 @@ class Bot(AccountingBot):
                 self.apply_order(result)
                 accepted += 1
             except (KeyError, TypeError, ValueError, ApiError) as exc:
-                self.write_uncertain = True
-                errors.append(UnknownWrite(f'Accepted order could not be reconciled: {exc}'))
+                error = UnknownWrite(f'Accepted order could not be reconciled: {exc}')
+                self.remember_uncertain_submission(slot, reserved, error, result.get('order_id') if isinstance(result, dict) else None)
+                errors.append(error)
         self.submissions += accepted
         self.expired += expired
         self.note_activity('submission_error' if errors else 'queued_quotes_expired' if expired else 'submitted',
@@ -450,6 +453,43 @@ class Bot(AccountingBot):
             raise next((e for e in errors if isinstance(e, UnknownWrite)), errors[0])
         if batch.interrupted:
             raise KeyboardInterrupt
+
+    def remember_uncertain_submission(self, slot, order, error, reported_order_id=None):
+        self.write_uncertain = True
+        attempt = dict(tick=self.tick, period=self.period, ticker=order.ticker,
+                       action=order.action, quantity=order.quantity, price=order.price,
+                       level=slot[1], child=slot[2], reported_order_id=reported_order_id,
+                       message=str(error))
+        self.uncertain_submissions.append(attempt)
+        self.record.emit('uncertain_submission', **attempt)
+
+    def audit_submission_failure(self, error):
+        """Read only: diagnose the case without replaying or resolving an unknown order."""
+        self.write_uncertain = True
+        context = dict(state='unverified', decision_tick=self.tick, decision_period=self.period,
+                       message=str(error), outcome='unknown', attempts=list(self.uncertain_submissions))
+        try:
+            values, _ = self.reads([('GET', 'case', {})])
+            case = values[0]
+            tick = float(case['tick'])
+            period = case['period']
+            status = case['status']
+            if not math.isfinite(tick) or period is None or not isinstance(status, str):
+                raise ValueError('Invalid case observation after submission failure')
+            context.update(observed_tick=tick, observed_period=period, observed_status=status)
+            if period != self.period or tick < self.tick:
+                context['state'] = 'case_reset'
+                self.round_changed = True
+            elif status == 'STOPPED' or tick >= self.cfg.end_tick:
+                context['state'] = 'case_ended'
+            else:
+                context['state'] = 'case_not_ended'
+        except (ApiError, KeyError, ValueError, TypeError) as exc:
+            context['read_error'] = str(exc)
+        self.submission_failure_context = context
+        self.record.emit('submission_failure_context', **context)
+        print(f'Submission outcome unknown; case state={context["state"]}; '
+              'no order replayed.', flush=True)
 
     def update_risk_mode(self, rows):
         value = self.pnl(rows)
@@ -619,13 +659,15 @@ class Bot(AccountingBot):
             positions = ({t: integer(final_rows[t]['position']) for t in TICKERS}
                          if final_rows is not None else None)
             value = self.pnl(final_rows) if final_rows is not None else None
-            confirmed = accounting and opened == [] and not errors
+            confirmed = accounting and opened == [] and not errors and not self.write_uncertain
             self.record.emit('end', tick=self.tick, volume=self.ledger.volume,
                              qualified=self.ledger.volume >= self.cfg.minimum_volume,
                              positions=positions, open_orders=len(opened) if opened is not None else None,
                              accounting_confirmed=accounting, cleanup_confirmed=confirmed,
                              unknown_order_ids=sorted(self.history_gaps), cleanup_errors=errors,
-                             round_changed=self.round_changed, server_pnl=value,
+                             round_changed=self.round_changed, write_uncertain=self.write_uncertain,
+                             uncertain_submissions=list(self.uncertain_submissions),
+                             submission_failure_context=self.submission_failure_context, server_pnl=value,
                              run_pnl=value-self.start_pnl if value is not None and self.start_pnl is not None else None)
             print(f'Final confirmed volume={self.ledger.volume:,}; positions={positions}; '
                   f'cleanup confirmed={confirmed}', flush=True)

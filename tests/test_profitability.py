@@ -31,7 +31,7 @@ class ProfitabilityTests(unittest.TestCase):
 
     def test_default_allocation_and_continuous_independent_replenishment(self):
         x, b, _ = self.ready(skew=0)
-        self.assertEqual(BUILD, 'continuous-v4')
+        self.assertEqual(BUILD, 'continuous-v4.1')
         self.assertEqual(len(b.working()), 28)
         for side in ('BUY', 'SELL'):
             self.assertEqual([sum(o.remaining for o in b.working()

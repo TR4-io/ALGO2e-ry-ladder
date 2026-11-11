@@ -255,7 +255,7 @@ class RuntimeTests(unittest.TestCase):
         for regime in ('oscillation','crowded','trend','jump','one_sided'):
             with self.subTest(regime=regime):
                 result=exercise(11,regime,runtime=True)
-                self.assertEqual(result['execution_backend'],'continuous-v4')
+                self.assertEqual(result['execution_backend'],'continuous-v4.1')
                 self.assertGreater(result['volume'],0)
                 self.assertLessEqual(result['max_inventory'],25000)
 

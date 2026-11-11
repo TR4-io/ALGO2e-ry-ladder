@@ -88,7 +88,7 @@ def exercise(seed,regime,fast=False,runtime=False):
     assert not b.ledger.active()
     assert x.positions == b.ledger.positions
     assert b.ledger.volume==x.volume
-    return dict(execution_backend='continuous-v4' if runtime else 'concurrent' if fast else 'serial',regime=regime,seed=seed,pnl=round(x.cash['RY']+x.positions['RY']*x.mid['RY'],2),volume=x.volume,
+    return dict(execution_backend='continuous-v4.1' if runtime else 'concurrent' if fast else 'serial',regime=regime,seed=seed,pnl=round(x.cash['RY']+x.positions['RY']*x.mid['RY'],2),volume=x.volume,
                 qualified=x.volume>=b.cfg.minimum_volume,max_inventory=max_inventory,
                 drawdown=round(drawdown,2),hard_stop=b.stopping,
                 residual=sum(map(abs,x.positions.values())),orders=len(x.orders),

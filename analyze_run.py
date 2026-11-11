@@ -2,7 +2,7 @@
 import argparse
 from collections import defaultdict
 import json
-from run_metrics import quality_summary
+from run_metrics import quality_summary, completion_summary, activity_summary
 
 
 def summarize(path):
@@ -76,10 +76,11 @@ def summarize(path):
         slot = levels.get(event.get('order_id'))
         key = f'{slot[0]} level {slot[1]}' if slot else event['intent']
         by_level[key] += event['quantity']
-    return dict(quality=quality_summary(events), latest_runtime=latest_runtime, runtime_reasons=dict(runtime_reasons), diagnostics=dict(diagnostics), risk_stop=risk_stop, latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
+    completion = completion_summary(events)
+    return dict(quality=quality_summary(events), activity=activity_summary(events), completion=completion, latest_runtime=latest_runtime, runtime_reasons=dict(runtime_reasons), diagnostics=dict(diagnostics), risk_stop=risk_stop, latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
                 recoveries=recoveries, latest_reconciliation=latest_reconciliation,
                 sampled_max_ry_inventory=max_inventory, sampled_max_drawdown=max_drawdown,
-                file=str(path), completed=end is not None, final=end, latest_status=last_status,
+                file=str(path), log_closed=end is not None, completed=completion["verified"], final=end, latest_status=last_status,
                 confirmed_fill_volume=dict(totals),
                 post_detection_drift_per_share={k: v[0]/v[1] for k, v in drift.items() if v[1]},
                 errors=errors,
