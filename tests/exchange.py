@@ -113,8 +113,12 @@ class Exchange:
                     o['status'] = 'CANCELLED'
             return dict(o)
         if path == 'commands/cancel':
+            ids = {int(oid) for oid in p['ids'].split(',')} if 'ids' in p else None
+            cancelled = []
             for o in self.orders.values():
-                if o['ticker'] == p['ticker'] and o['status'] == 'OPEN':
+                selected = o['order_id'] in ids if ids is not None else o['ticker'] == p['ticker']
+                if selected and o['status'] == 'OPEN':
                     o['status'] = 'CANCELLED'
-            return {}
+                    cancelled.append(o['order_id'])
+            return {'cancelled_order_ids': cancelled}
         raise AssertionError((method, path, p))

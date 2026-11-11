@@ -146,13 +146,14 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(b.ledger.volume, 500)
         self.assertGreater(len(x.orders), before)
 
-    def test_permanently_missing_order_fails_closed_after_bounded_elapsed_time(self):
+    def test_permanently_missing_order_enters_automatic_recovery(self):
         x, b, _ = setup()
         b.step()
         o=b.working()[0];x.orders[o.id]['status']='CANCELLED';x.hide_history=True
         b.step();before=len(x.orders)
         x.now=6
-        with self.assertRaises(ApiError):b.step()
+        b.step()
+        self.assertTrue(b.recovering)
         self.assertEqual(len(x.orders),before)
 
     def test_queue_wait_is_not_book_age_but_slow_http_response_is(self):
@@ -216,11 +217,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(len(x.orders),count)
         self.assertFalse(b.working())
 
-    def test_loss_stop_liquidates_after_bounded_cancel_batches(self):
+    def test_manual_stop_liquidates_after_bounded_cancel_batches(self):
         x,b,_=setup();self.stage(x,b)
         for o in list(x.orders.values()):
             if o['action']=='BUY':x.fill(o,o['quantity'],o['price'],True)
         x.mid['RY']=9.5
+        b.stopping = True
         for _ in range(35):
             running=b.step();x.now+=.2
             if not running:break
@@ -252,7 +254,7 @@ class RuntimeTests(unittest.TestCase):
         for regime in ('oscillation','crowded','trend','jump','one_sided'):
             with self.subTest(regime=regime):
                 result=exercise(11,regime,runtime=True)
-                self.assertEqual(result['execution_backend'],'continuous-v2')
+                self.assertEqual(result['execution_backend'],'continuous-v3')
                 self.assertGreater(result['volume'],0)
                 self.assertLessEqual(result['max_inventory'],25000)
 

@@ -141,15 +141,18 @@ class ExecutionTests(unittest.TestCase):
         b.cleanup()
         self.assertEqual(b.api.call_count, 1)
 
-    def test_hard_stop_precedes_qualification(self):
+    def test_loss_does_not_stop_quoting_before_qualification(self):
         b = self.bot()
         b.period, b.start_pnl = 1, 0
         b.api = Mock(return_value={'period': 1, 'tick': 100, 'status': 'ACTIVE'})
         b.reconcile = Mock()
         b.securities = Mock(return_value={t: dict(position=0, realized=-600, unrealized=0) for t in ('CNR','RY','AC')})
-        self.assertFalse(b.step())
-        self.assertTrue(b.stopping)
-        self.assertEqual(b.mode, 'EXIT')
+        b.manage = Mock()
+        self.assertTrue(b.step())
+        self.assertFalse(b.stopping)
+        self.assertFalse(b.cautious)
+        self.assertEqual(b.mode, 'MAKE')
+        b.manage.assert_called_once_with('RY')
 
     def test_repeated_snapshot_mismatch_blocks_orders(self):
         b = self.bot()

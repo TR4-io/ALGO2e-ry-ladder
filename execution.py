@@ -105,7 +105,10 @@ class Order:
 
 
 class Ledger:
-    """Inventory comes only from confirmed fills, never cancellation assumptions."""
+    """Confirmed fill deltas; runtime may rebase verified quiescent positions.
+
+    A cancellation acknowledgement alone never changes inventory or fill volume.
+    """
     def __init__(self):
         self.orders = {}
         self.positions = dict.fromkeys(TICKERS, 0)

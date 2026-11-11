@@ -112,7 +112,7 @@ class Bot:
         print(f'Connected. Minimum {self.cfg.minimum_volume:,} shares EACH run; target {self.cfg.target_volume:,}.')
         print(f'Gross/net budgets: {self.gross_limit}/{self.net_limit}.')
         if self.start_pnl is None:
-            print('P&L unavailable: dollar stops disabled; share risk limits remain active.')
+            print('P&L unavailable; share limits remain active.')
 
     def update(self, row):
         oid = integer(row['order_id'])
@@ -431,16 +431,7 @@ class Bot:
         pnl = value-self.start_pnl if value is not None and self.start_pnl is not None else None
         if pnl is not None:
             self.peak = max(self.peak, pnl)
-            self.cautious = pnl <= -self.cfg.soft_loss
-            reason = ('hard_loss' if pnl <= -self.cfg.hard_loss else
-                      'profit_drawdown' if self.peak >= self.cfg.profit_arm and
-                      self.peak-pnl >= self.cfg.drawdown else None)
-            if reason and not self.stopping:
-                self.stop_reason = reason
-                self.stopping = True
-                self.record.emit('risk_stop', tick=tick, reason=reason, pnl=pnl, peak=self.peak)
-                print(f'RISK STOP: {reason}; P&L={pnl:.2f}, peak={self.peak:.2f}. '
-                      'Closing inventory, then exiting.', flush=True)
+        self.cautious = False  # P&L is telemetry, never a stop or size throttle.
         self.mode = phase(self.cfg, tick, self.ledger.volume, self.stopping)
         if tick-self.last_report >= 5:
             self.last_report = tick

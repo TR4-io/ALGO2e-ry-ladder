@@ -13,6 +13,8 @@ def summarize(path):
     risk_stop = None
     latest_runtime = None
     runtime_reasons = defaultdict(int)
+    recoveries = []
+    latest_reconciliation = None
     fills = []
     levels = {}
     max_inventory = 0
@@ -29,6 +31,15 @@ def summarize(path):
             if kind == 'runtime_cycle':
                 latest_runtime = event
                 runtime_reasons[event['reason']] += 1
+                max_inventory = max(max_inventory, abs(event.get('position', 0)))
+                pnl = event.get('pnl')
+                if pnl is not None:
+                    peak = max(peak, pnl)
+                    max_drawdown = max(max_drawdown, peak-pnl)
+            if kind == 'recovery_complete':
+                recoveries.append(event)
+            if kind == 'reconciliation_pending':
+                latest_reconciliation = event
             if kind in ('quote_blocked', 'book_refresh'):
                 diagnostics[event['reason']] += 1
             elif kind == 'risk_stop':
@@ -62,6 +73,7 @@ def summarize(path):
         key = f'{slot[0]} level {slot[1]}' if slot else event['intent']
         by_level[key] += event['quantity']
     return dict(latest_runtime=latest_runtime, runtime_reasons=dict(runtime_reasons), diagnostics=dict(diagnostics), risk_stop=risk_stop, latest_execution_timing=latest_execution_timing, fill_volume_by_level=dict(by_level),
+                recoveries=recoveries, latest_reconciliation=latest_reconciliation,
                 sampled_max_ry_inventory=max_inventory, sampled_max_drawdown=max_drawdown,
                 file=str(path), completed=end is not None, final=end, latest_status=last_status,
                 confirmed_fill_volume=dict(totals),

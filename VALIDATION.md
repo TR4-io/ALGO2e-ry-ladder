@@ -112,3 +112,17 @@ Removed the midpoint-move side blocks and their re-entry timers from both contin
 New regression tests exercise repeated fast reversals with both sides eligible while flat, verify that neither management path supplies trend-blocked sides, and retain hard-limit enforcement. The old regression requiring buys to pause was updated to require both sides instead.
 
 All 118 tests passed after this change; compilation and diff checks passed. No live RIT orders were submitted during validation.
+
+
+## Continuous-v3 automatic recovery and removal of P&L stops
+
+The default runtime now refreshes both order and position snapshots after a mismatch. Missing history triggers automatic cancellation and verified position recovery after one second by default, rather than a permanent stop. Recovery requires two stable position observations with ordered empty-order reads and a same-round check; adopted positions must lie within outstanding-fill reservations. Historical fills remain unknown until confirmed, and late history never changes the adopted position twice. Per-order fallback lookups rotate across missing IDs. Manual exit uses the same recovery path.
+
+Hard-loss stops, profit-drawdown stops and P&L-based size reductions were removed from the current and legacy engines. Old JSON risk threshold fields remain accepted but are ignored. Hard share limits and operator/case termination remain active.
+
+- `python3 -m unittest discover -s tests -q`: **131 tests passed**. Thirteen new recovery regressions cover missing history with flat/nonzero inventory, late fills arriving after new fills, cancellation races, snapshot races, rotating detail requests, delayed/lost cancellation responses, manual exit, case end/reset, foreign orders, the 25,000-share ceiling, and P&L-stop removal. Existing loss-stop tests now assert continued quoting or explicitly requested liquidation.
+- Targeted recovery/telemetry regressions passed again after the final diagnostic refinements. Compilation and diff checks passed.
+- All **25 synthetic stress rounds** completed with sampled absolute inventory at most **25,000**, **0 automatic loss stops**, and **24 rounds with residual inventory** at case end. Scheduled liquidation remains disabled by default. Confirmed accounting matched the synthetic exchange in these rounds. Results: `validation/continuous-v3-stress.json`.
+- Offline paced-worker benchmark: at 60 requests/second and 20 ms artificial response latency, 50 orders were established in 1.389 seconds; six injected fills replenished with a maximum tested delay of 0.103 seconds. At 20 requests/second and 50 ms latency, 50 orders took 4.398 seconds and maximum tested refill delay was 0.702 seconds. Both respected the rolling-second request cap. Results: `validation/continuous-v3-benchmark.json`.
+
+No live RIT connection or trading was used. These results verify execution mechanics, not live profitability, fill frequency, or guaranteed recovery from a persistently contradictory/unavailable server. The supplied status line confirmed `EXIT` plus `reconciliation_pending`; without its run log the exact missing server record remains unknown.

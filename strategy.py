@@ -115,6 +115,7 @@ def main():
             if bot.stopping:
                 raise KeyboardInterrupt
             bot.stopping = True
+            bot.stop_reason = 'user_interrupt'
             print('Stopping new exposure and closing inventory; Ctrl+C again exits immediately.')
         previous = signal.signal(signal.SIGINT, stop)
         failures = 0

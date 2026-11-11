@@ -79,17 +79,18 @@ class StallTests(unittest.TestCase):
             bot.step()
         self.assertIn('gross=0/25,000 net=0/25,000 open=8 buy=12,500 sell=12,500', out.getvalue())
 
-    def test_drawdown_stop_has_explicit_reason(self):
+    def test_legacy_runner_no_longer_stops_on_drawdown(self):
         x = BatchExchange()
         log, out = io.StringIO(), io.StringIO()
         bot = Bot(x, Config(child_order_size=5000), recorder=Recorder(log), clock=lambda: x.now)
         with contextlib.redirect_stdout(out):
             bot.start()
             bot.peak = 1000
-            self.assertFalse(bot.step())
-        self.assertIn('RISK STOP: profit_drawdown', out.getvalue())
+            self.assertTrue(bot.step())
+        self.assertNotIn('RISK STOP', out.getvalue())
         events = [json.loads(line) for line in log.getvalue().splitlines()]
-        self.assertEqual(next(e for e in events if e['event'] == 'risk_stop')['reason'], 'profit_drawdown')
+        self.assertFalse(any(e['event'] == 'risk_stop' for e in events))
+        self.assertFalse(bot.stopping)
 
     def test_heartbeat_reports_without_tick_progress_or_api_calls(self):
         x = BatchExchange()

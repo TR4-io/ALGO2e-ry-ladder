@@ -11,7 +11,7 @@ class Config:
     child_order_size: int = 500
     max_submit_batch: int = 8
     max_cancel_batch: int = 8
-    reconcile_timeout: float = 5
+    reconcile_timeout: float = 1
     cancel_retry_seconds: float = 1
     telemetry_seconds: float = 1
     tighten_after: float = 50
@@ -44,6 +44,7 @@ class Config:
     io_workers: int = 4
     max_book_age: float = .60
     max_spread: float = .60
+    # Deprecated compatibility fields; P&L stops and size throttles are removed.
     soft_loss: float = 500
     hard_loss: float = 1500
     drawdown: float = 900
@@ -119,8 +120,8 @@ class Config:
             raise ValueError('Invalid polling settings')
         if not (0 < self.recenter_move and 0 < self.inventory_age):
             raise ValueError('Invalid management thresholds')
-        if not self.soft_loss < self.hard_loss or self.exit_slippage > self.urgent_slippage or self.volume_buffer > 1:
-            raise ValueError('Invalid loss, slippage or volume settings')
+        if self.exit_slippage > self.urgent_slippage or self.volume_buffer > 1:
+            raise ValueError('Invalid slippage or volume settings')
         return self
 
     @classmethod

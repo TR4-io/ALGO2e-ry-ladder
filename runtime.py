@@ -9,11 +9,11 @@ import time
 
 from engine import Bot as AccountingBot
 from execution import (ApiError, HttpError, UnknownWrite, Order, TICKERS,
-                       MAKER_REBATE, integer, capacity, clean_book)
+                       MAKER_REBATE, integer, capacity, clean_book, risk_bounds)
 from concurrent_client import ExpiredQuote
 from policy import ladder, split_targets, submission_targets, phase, sweep
 
-BUILD = 'continuous-v2'
+BUILD = 'continuous-v3'
 
 
 class Bot(AccountingBot):
@@ -34,6 +34,17 @@ class Bot(AccountingBot):
         self.last_cycle_seconds = 0
         self.last_book_age = None
         self.next_delay = self.cfg.poll_seconds
+        self.detail_cursor = 0
+        self.recovering = False
+        self.recovery_cancelled = False
+        self.recovery_sample = None
+        self.recovery_sample_at = None
+        self.last_recovery_cancel = -math.inf
+        self.archived_ids = set()
+        self.history_gaps = set()
+        self.last_history_check = -math.inf
+        self.reconciliation = dict(missing_order_ids=[], server_positions=None,
+                                   ledger_positions=dict(self.ledger.positions), wait_seconds=0)
 
     def batch(self, calls, deadline=None, guard=None):
         calls = list(calls)
@@ -66,6 +77,20 @@ class Bot(AccountingBot):
             return  # A delayed snapshot cannot reverse a confirmed fill.
         if o.status != 'OPEN' and row['status'] == 'OPEN':
             return  # A delayed open snapshot cannot resurrect a terminal order.
+        if oid in self.archived_ids:
+            # Position was already adopted from the exchange after cancellation.
+            # Late history improves volume accounting, never moves inventory twice.
+            positions = dict(self.ledger.positions)
+            before = o.filled
+            self.ledger.update(row)
+            self.ledger.positions = positions
+            self.history_gaps.discard(oid)
+            if o.filled > before:
+                self.record.emit('fill', tick=self.tick, order_id=oid, ticker=o.ticker,
+                                 action=o.action, quantity=o.filled-before, limit_price=o.price,
+                                 execution_price=None, intent=self.intents.get(oid, 'unknown'),
+                                 historical=True)
+            return
         self.update(row)
         if o.status != 'OPEN' or o.remaining == 0:
             pending = self.pending_cancel.pop(oid, None)
@@ -73,28 +98,36 @@ class Bot(AccountingBot):
                 self.record.emit('cancel', tick=self.tick, order_id=oid, reason=pending[1])
             self.requote_orders.discard(oid)
 
-    def reconcile_frame(self, opened, securities):
-        self.operation = 'reconciling'
+    def reconcile_orders(self, opened):
         rows = {integer(r['order_id']): r for r in opened}
         if any(oid not in self.ledger.orders for oid in rows):
             raise ApiError('Untracked order: run one bot only on this account')
+        if any(oid in self.archived_ids for oid in rows):
+            raise ApiError('Previously closed order reappeared; cannot trust open-order snapshot')
         for row in rows.values():
             self.apply_order(row)
         missing = [o.id for o in self.working() if o.id not in rows]
-        if missing:
+        audit = set(self.history_gaps) if self.clock()-self.last_history_check >= 1 else set()
+        lookup = list(dict.fromkeys([*missing, *sorted(audit)]))
+        if lookup:
             # Two history requests cover any number of children. No per-order
             # retry loop, repeated history downloads or sleeps inside a cycle.
             histories, _ = self.reads([('GET', 'orders', {'status': s})
                                        for s in ('TRANSACTED', 'CANCELLED')])
             terminal = {integer(r['order_id']): r for history in histories for r in history}
-            for oid in missing:
+            for oid in lookup:
                 if oid in terminal:
                     self.apply_order(terminal[oid])
-            missing = [oid for oid in missing if self.ledger.orders[oid].remaining > 0]
+            lookup = [oid for oid in lookup if self.ledger.orders[oid].remaining > 0
+                      or oid in self.history_gaps]
             # History can be truncated. Resolve at most four details this cycle.
-            if missing:
-                batch, _ = self.batch([('GET', f'orders/{oid}', {}) for oid in missing[:4]])
-                for oid, result in zip(missing[:4], batch.results):
+            # Rotate so permanently missing early IDs cannot starve later orders.
+            if lookup:
+                start = self.detail_cursor % len(lookup)
+                selected = (lookup[start:]+lookup[:start])[:4]
+                self.detail_cursor = start+len(selected)
+                batch, _ = self.batch([('GET', f'orders/{oid}', {}) for oid in selected])
+                for oid, result in zip(selected, batch.results):
                     if isinstance(result, HttpError) and result.status == 404:
                         continue
                     if isinstance(result, Exception):
@@ -102,27 +135,145 @@ class Bot(AccountingBot):
                     self.apply_order(result)
                 if batch.interrupted:
                     raise KeyboardInterrupt
+            if audit:
+                self.last_history_check = self.clock()
             missing = [oid for oid in missing if self.ledger.orders[oid].remaining > 0]
+        return missing
+
+    @staticmethod
+    def position_rows(securities):
         rows = {r['ticker']: r for r in securities}
         if not set(TICKERS).issubset(rows):
             raise ApiError('Missing security position data')
         if any(integer(r['position']) for t, r in rows.items() if t not in TICKERS):
             raise ApiError('Unexpected inventory in another security')
+        for t in TICKERS:
+            integer(rows[t]['position'])
+        return rows
+
+    def reconcile_frame(self, opened, securities):
+        self.operation = 'reconciling'
+        missing = self.reconcile_orders(opened)
+        rows = self.position_rows(securities)
         def matches():
             return {t: integer(rows[t]['position']) for t in TICKERS} == self.ledger.positions
         if not missing and not matches():
+            # Re-read BOTH sides of a non-atomic snapshot. Re-reading positions
+            # alone cannot incorporate a fill missing from the order snapshot.
+            refreshed, _ = self.reads([('GET', 'orders', {'status': 'OPEN'})])
+            missing = self.reconcile_orders(refreshed[0])
             refreshed, _ = self.reads([('GET', 'securities', {})])
-            rows = {r['ticker']: r for r in refreshed[0]}
+            rows = self.position_rows(refreshed[0])
+        self.reconciliation = dict(missing_order_ids=missing,
+                                   server_positions={t: integer(rows[t]['position']) for t in TICKERS},
+                                   ledger_positions=dict(self.ledger.positions), wait_seconds=0)
         if missing or not matches():
             if self.unresolved_since is None:
                 self.unresolved_since = self.clock()
-            self.note_activity('reconciliation_pending', missing_orders=len(missing),
-                               wait_seconds=round(self.clock()-self.unresolved_since, 3))
-            if self.clock()-self.unresolved_since >= self.cfg.reconcile_timeout:
-                raise ApiError('Order/position reconciliation remains unresolved; no guessed fills or new exposure')
+            self.reconciliation['wait_seconds'] = round(self.clock()-self.unresolved_since, 3)
+            self.note_activity('reconciliation_pending', missing_orders=len(missing), **self.reconciliation)
+            self.record.emit('reconciliation_pending', tick=self.tick, **self.reconciliation)
+            if (self.stopping or self.recovering or
+                    self.clock()-self.unresolved_since >= self.cfg.reconcile_timeout):
+                self.recovering = True
             return None
         self.unresolved_since = None
         return rows
+
+    def recovery_step(self):
+        """Cancel, establish a quiescent account, then resume without a restart.
+
+        No fill quantity is inferred from disappearance. Exchange positions are
+        adopted only after acknowledged cancellation and two stable, ordered
+        empty-orders/positions/empty-orders observations on separate cycles.
+        """
+        self.operation = 'recovering_account'
+        now = self.clock()
+        if not self.recovery_cancelled:
+            if now-self.last_recovery_cancel < self.cfg.cancel_retry_seconds:
+                return None
+            self.last_recovery_cancel = now
+            # Cancel only this bot's known orders, including IDs absent from OPEN.
+            # Explicit IDs avoid accidentally cancelling an unrelated writer.
+            ids = [o.id for o in self.working()]
+            if ids:
+                batch, _ = self.batch([('POST', 'commands/cancel', {'ids': ','.join(map(str, ids))})])
+                if batch.interrupted:
+                    raise KeyboardInterrupt
+                result = batch.results[0]
+                if isinstance(result, UnknownWrite):
+                    self.note_activity('recovery_cancel_retry', message=str(result))
+                    return None
+                if isinstance(result, Exception):
+                    raise result
+                if not isinstance(result, dict) or not isinstance(result.get('cancelled_order_ids'), list):
+                    raise ApiError('Invalid bulk-cancellation acknowledgement')
+            self.recovery_cancelled = True
+            self.recovery_sample = None
+            self.record.emit('recovery_started', tick=self.tick, order_ids=ids,
+                             **self.reconciliation)
+        opened, _ = self.reads([('GET', 'orders', {'status': 'OPEN'})])
+        self.reconcile_orders(opened[0])
+        positions, _ = self.reads([('GET', 'securities', {})])
+        rows = self.position_rows(positions[0])
+        after, _ = self.reads([('GET', 'orders', {'status': 'OPEN'})])
+        self.reconcile_orders(after[0])
+        # Check the round again: recovery must never authorize a new-period order.
+        cases, times = self.reads([('GET', 'case', {})])
+        case = cases[0]
+        tick = float(case['tick'])
+        if not math.isfinite(tick):
+            raise ApiError('Invalid recovery case tick')
+        if case.get('period') != self.period or tick < self.tick:
+            self.round_changed = True
+            raise ApiError('Case reset during recovery')
+        self.tick, self.case_seen = tick, times[0]
+        if case['status'] != 'ACTIVE' or tick >= self.cfg.end_tick:
+            self.note_activity('case_inactive')
+            return None
+        if opened[0] or after[0]:
+            self.recovery_cancelled = False
+            self.recovery_sample = None
+            self.note_activity('recovery_cancel_pending', observed_open_orders=len(after[0]))
+            return None
+        position = {t: integer(rows[t]['position']) for t in TICKERS}
+        self.reconciliation = dict(missing_order_ids=[o.id for o in self.working()],
+                                   server_positions=dict(position),
+                                   ledger_positions=dict(self.ledger.positions),
+                                   wait_seconds=round(self.clock()-self.unresolved_since, 3)
+                                   if self.unresolved_since is not None else 0)
+        low, high, _, _ = risk_bounds(self.ledger.positions, self.working())
+        if any(not low[t] <= position[t] <= high[t] for t in TICKERS):
+            self.recovery_sample = None
+            self.note_activity('recovery_position_outside_reservations', server_positions=position,
+                               low=low, high=high)
+            return None
+        if position != self.recovery_sample:
+            self.recovery_sample, self.recovery_sample_at = position, self.clock()
+        elif self.clock()-self.recovery_sample_at >= max(.2, self.cfg.poll_seconds):
+            old_position = dict(self.ledger.positions)
+            gaps = [o.id for o in self.working()]
+            self.history_gaps.update(gaps)
+            self.archived_ids.update(self.ledger.orders)
+            for oid in gaps:
+                self.ledger.orders[oid].status = 'RECOVERED_UNKNOWN'
+            self.ledger.positions = position
+            self.pending_cancel.clear()
+            self.requote_orders.clear()
+            self.inventory_since = self.clock() if position['RY'] else None
+            self.unresolved_since = None
+            self.recovering = self.recovery_cancelled = False
+            self.recovery_sample = None
+            self.reconciliation = dict(missing_order_ids=[], server_positions=dict(position),
+                                       ledger_positions=dict(position), wait_seconds=0)
+            self.record.emit('recovery_complete', tick=self.tick, previous_positions=old_position,
+                             positions=position, unknown_order_ids=sorted(self.history_gaps),
+                             confirmed_volume=self.ledger.volume)
+            self.note_activity('recovery_complete', unknown_history=len(self.history_gaps))
+            return rows
+        self.note_activity('recovery_verifying', server_positions=position,
+                           unknown_history=len(self.history_gaps))
+        return None
 
     def fresh_book(self):
         self.operation = 'reading_fresh_book'
@@ -283,14 +434,7 @@ class Bot(AccountingBot):
         self.run_pnl = value-self.start_pnl if value is not None and self.start_pnl is not None else None
         if self.run_pnl is not None:
             self.peak = max(self.peak, self.run_pnl)
-            self.cautious = self.run_pnl <= -self.cfg.soft_loss
-            reason = ('hard_loss' if self.run_pnl <= -self.cfg.hard_loss else
-                      'profit_drawdown' if self.peak >= self.cfg.profit_arm and
-                      self.peak-self.run_pnl >= self.cfg.drawdown else None)
-            if reason and not self.stopping:
-                self.stopping, self.stop_reason = True, reason
-                self.record.emit('risk_stop', tick=self.tick, reason=reason, pnl=self.run_pnl, peak=self.peak)
-                print(f'RISK STOP: {reason}; P&L={self.run_pnl:.2f}; closing inventory.', flush=True)
+        self.cautious = False  # P&L is telemetry, never an execution gate.
         self.mode = phase(self.cfg, self.tick, self.ledger.volume, self.stopping)
 
     def step(self):
@@ -313,7 +457,10 @@ class Bot(AccountingBot):
                 self.request_cancels(self.working(), 'case_inactive')
                 return not (self.active_seen or self.stopping or tick >= self.cfg.end_tick)
             self.active_seen = True
-            rows = self.reconcile_frame(values[1], values[2])
+            self.mode = phase(self.cfg, self.tick, self.ledger.volume, self.stopping)
+            rows = None if self.recovering else self.reconcile_frame(values[1], values[2])
+            if self.recovering:
+                rows = self.recovery_step()
             if rows is None:
                 return True
             self.update_risk_mode(rows)
@@ -378,6 +525,8 @@ class Bot(AccountingBot):
                        submissions_per_second=(self.submissions-submitted)/elapsed,
                        fills_per_second=(self.ledger.volume-filled)/elapsed,
                        pending_cancels=len(self.pending_cancel), cycle_seconds=self.last_cycle_seconds,
+                       reconciliation=self.reconciliation, recovering=self.recovering,
+                       unknown_history=sorted(self.history_gaps), stop_reason=self.stop_reason,
                        book_age=self.last_book_age, requests=self.cycle_requests,
                        expired_quotes=self.expired, **self.transport.metrics())
         self.record.emit('runtime_cycle', **metrics)
@@ -385,7 +534,9 @@ class Bot(AccountingBot):
               f'RY={metrics["position"]:,} volume={self.ledger.volume:,} '
               f'sent/s={metrics["submissions_per_second"]:.1f} '
               f'filled_shares/s={metrics["fills_per_second"]:.0f} '
-              f'cycle={self.last_cycle_seconds:.3f}s reason={metrics["reason"]}', flush=True)
+              f'cycle={self.last_cycle_seconds:.3f}s reason={metrics["reason"]} '
+              f'missing={len(self.reconciliation["missing_order_ids"])} '
+              f'recovering={self.recovering} history_gaps={len(self.history_gaps)}', flush=True)
         self.report_started = now
         self.report_counts = self.submissions, self.cancel_requests, self.ledger.volume
 
@@ -411,11 +562,13 @@ class Bot(AccountingBot):
             positions = {t: integer(final_rows[t]['position']) for t in TICKERS}
             self.record.emit('end', tick=self.tick, volume=self.ledger.volume,
                              qualified=self.ledger.volume >= self.cfg.minimum_volume, positions=positions,
-                             open_orders=len(values[0]), accounting_confirmed=rows is not None,
+                             open_orders=len(values[0]), accounting_confirmed=rows is not None and not self.history_gaps,
+                             unknown_order_ids=sorted(self.history_gaps),
                              server_pnl=self.pnl(final_rows),
                              run_pnl=(self.pnl(final_rows)-self.start_pnl
                                       if self.pnl(final_rows) is not None and self.start_pnl is not None else None))
             print(f'Final confirmed volume={self.ledger.volume:,}; positions={positions}; '
-                  f'open orders={len(values[0])}; accounting confirmed={rows is not None}', flush=True)
+                  f'open orders={len(values[0])}; '
+                  f'accounting confirmed={rows is not None and not self.history_gaps}', flush=True)
         except (ApiError, KeyError, ValueError, TypeError) as exc:
             print(f'Cleanup not confirmed: {exc}. Inspect RIT.', flush=True)

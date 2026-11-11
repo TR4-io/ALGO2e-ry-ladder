@@ -31,7 +31,7 @@ class MaxSizingTests(unittest.TestCase):
         self.assertEqual((low['RY'],high['RY']),(-8000,8000))
         self.assertTrue(all(o.quantity<=5000 for o in b.ledger.active()))
 
-    def test_full_sweep_then_adverse_move_liquidates_entire_position(self):
+    def test_full_sweep_and_adverse_move_continue_quoting_within_limits(self):
         x=BatchExchange();b=Bot(x,Config(sizes=(5000,5000,5000,5000),child_order_size=5000),clock=lambda:x.now)
         with contextlib.redirect_stdout(io.StringIO()):
             b.start();b.step()
@@ -40,14 +40,17 @@ class MaxSizingTests(unittest.TestCase):
             self.assertEqual(x.positions['RY'],20000)
             x.mid['RY']=9.5;x.now=1
             for _ in range(30):
-                running=b.step()
-                self.assertTrue(b.stopping)
+                self.assertTrue(b.step())
+                self.assertFalse(b.stopping)
+                self.assertFalse(b.cautious)
+                self.assertEqual(b.mode, 'MAKE')
+                _, _, gross, net = risk_bounds(b.ledger.positions, b.ledger.active())
+                self.assertLessEqual(max(gross, net),25000)
                 self.assertLessEqual(abs(x.positions['RY']),25000)
-                if not running:break
                 x.now+=.25
-            self.assertFalse(running)
+            self.assertTrue(b.ledger.active())
+            self.assertTrue(any(o.action == 'SELL' for o in b.ledger.active()))
             b.cleanup()
-        self.assertFalse(any(x.positions.values()))
         self.assertFalse(b.ledger.active())
         self.assertTrue(all(o['quantity']<=5000 for o in x.orders.values()))
 
